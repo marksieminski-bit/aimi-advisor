@@ -69,8 +69,8 @@
       <div class="form-row"><label>Learning Pace</label>
         <select id="s_pace"><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select>
       </div>
-      <div class="form-row checkbox-row"><label><input id="s_srt" type="checkbox"> Sensitivity raises target</label></div>
-      <div class="form-row checkbox-row"><label><input id="s_rlt" type="checkbox"> Resistance lowers target</label></div>
+      <input id="s_srt" type="checkbox" style="display:none">
+      <input id="s_rlt" type="checkbox" style="display:none">
     </div>
     <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
     <span id="settingsMsg" class="msg"></span>
@@ -576,6 +576,7 @@ function showInfo(idx){
   let html = `<h3>${esc(it.name)}</h3>`;
   html += `<div class="info-target">Recommended for you: <strong>${esc(it.target)}</strong></div>`;
   if(it.info_long) html += `<p>${esc(it.info_long)}</p>`;
+  if(it.location) html += `<div class="info-location">📍 <b>Where to find it:</b> ${esc(it.location)}</div>`;
   if(it.effect_up||it.effect_down){
     html += `<div class="info-effects">`;
     if(it.effect_up) html += `<div class="info-eff"><span class="up">▲ Higher</span> ${esc(it.effect_up)}</div>`;
@@ -607,6 +608,7 @@ async function toggleGlossary(){
               <div class="gloss-name">${esc(name)}</div>
               <div class="gloss-short">${esc(r.short||'')}</div>
               <div class="gloss-long">${esc(r.long||'')}</div>
+              ${r.location?`<div class="gloss-location">📍 <b>Where to find it:</b> ${esc(r.location)}</div>`:''}
               ${(r.effect_up||r.effect_down)?`<div class="gloss-effects">
                 ${r.effect_up?`<div><span class="up">▲ Higher</span> ${esc(r.effect_up)}</div>`:''}
                 ${r.effect_down?`<div><span class="down">▼ Lower</span> ${esc(r.effect_down)}</div>`:''}
@@ -726,6 +728,18 @@ function renderBolus(b){
     ${stat('Lows ≤3h after manual', s.lows_after_manual, 'co-occurrence')}
     ${stat('Meals high at 4h', s.uncorrected_meals, 'logged meals')}
   </div>`;
+  // How SMBs were told apart (transparency)
+  const detectLabels = {
+    "flag isSMB=True": "via AAPS isSMB flag",
+    "small Correction Bolus → SMB": "small Correction Boluses treated as automatic SMBs",
+    "type=SMB": "via type=SMB field",
+    "notes mention SMB": "via notes",
+    "size-based (no clear type)": "by size (no explicit SMB tag in your data)",
+    "none": "no SMBs detected"
+  };
+  if(s.smb_detect){
+    html += `<div class="muted" style="font-size:12px;margin:6px 0 0">How SMBs were identified: ${esc(detectLabels[s.smb_detect]||s.smb_detect)}. Your pump/Nightscout data didn't always carry an explicit SMB flag, so AIMI's automatic micro-boluses (small Correction Boluses with no carbs) are counted as SMBs, not manual.</div>`;
+  }
   if(b.findings && b.findings.length){
     html += b.findings.map(f=>{
       const cls = f.level==='warn'?'annotation-warn':'annotation-info';

@@ -55,6 +55,47 @@ def _bg_extreme_after(entries_sorted, ts, hours, kind="min"):
     return min(vals) if kind == "min" else max(vals)
 
 
+def _is_smb(t):
+    """
+    Decide if a treatment is an automatic SMB (delivered by AIMI) vs a manual bolus.
+    AAPS/AIMI tags SMBs several ways depending on version; we check all of them:
+      1. Explicit boolean flag: isSMB / isSmb
+      2. type field == "SMB"
+      3. eventType "Correction Bolus" with NO carbs  (AAPS records SMBs as Correction Bolus)
+      4. "smb" mentioned in notes
+    Manual boluses are typically "Meal Bolus"/"Bolus", carry carbs, or are larger.
+    Returns (is_smb: bool, reason: str).
+    """
+    # 1. explicit flag (definitive)
+    for flag in ("isSMB", "isSmb", "is_smb"):
+        if flag in t:
+            return (bool(t[flag]), f"flag {flag}={t[flag]}")
+    # 2. explicit type
+    typ = (t.get("type") or "").upper()
+    if typ == "SMB":
+        return (True, "type=SMB")
+    # 3. notes
+    notes = (t.get("notes") or "").lower()
+    if "smb" in notes:
+        return (True, "notes mention SMB")
+    # 4. eventType heuristics
+    et = (t.get("eventType") or "").lower()
+    carb = t.get("carbs") or 0
+    ins = t.get("insulin") or 0
+    if et in ("meal bolus", "snack bolus") or carb > 0:
+        return (False, "meal/carb bolus → manual")
+    if et == "correction bolus":
+        # In AAPS, automatic SMBs are written as Correction Bolus.
+        # A genuinely manual correction is possible but far less common and usually larger.
+        if ins <= 1.0:
+            return (True, "small Correction Bolus → SMB")
+        return (False, "large Correction Bolus → likely manual")
+    if et in ("bolus", "") :
+        # bare 'Bolus' with no carbs: small = SMB, large = manual
+        return (ins <= 0.6, "size-based (no clear type)")
+    return (False, "default → manual")
+
+
 def classify_treatments(treatments):
     """Split NS treatments into manual boluses, SMBs, carbs, others."""
     manual_bolus, smb, carbs, temp_basal, other = [], [], [], [], []
@@ -62,14 +103,10 @@ def classify_treatments(treatments):
         et = (t.get("eventType") or "").lower()
         ins = t.get("insulin")
         carb = t.get("carbs")
-        is_smb = bool(t.get("isSMB")) or "smb" in (t.get("notes") or "").lower()
-        if ins and is_smb:
-            smb.append(t)
-        elif ins and et in ("bolus", "meal bolus", "correction bolus", "snack bolus") and not is_smb:
-            manual_bolus.append(t)
-        elif ins and not is_smb:
-            # bolus without clear type — treat as manual if sizeable
-            (manual_bolus if ins >= 0.5 else smb).append(t)
+        if ins and ins > 0:
+            is_smb, reason = _is_smb(t)
+            t["_smb_reason"] = reason
+            (smb if is_smb else manual_bolus).append(t)
         if carb and carb > 0:
             carbs.append(t)
         if et in ("temp basal", "temporary basal"):
@@ -92,6 +129,13 @@ def analyze_boluses(entries, treatments, tz_offset_min=0):
     manual = cls["manual_bolus"]
     smbs = cls["smb"]
     carbs = cls["carbs"]
+
+    # How were SMBs detected? (transparency for the user)
+    detect_reasons = {}
+    for t in smbs:
+        r = t.get("_smb_reason", "?")
+        detect_reasons[r] = detect_reasons.get(r, 0) + 1
+    smb_detect = max(detect_reasons, key=detect_reasons.get) if detect_reasons else "none"
 
     days_span = max(1, (entries_sorted[-1]["date"] - entries_sorted[0]["date"]) / 86400000)
 
@@ -195,6 +239,7 @@ def analyze_boluses(entries, treatments, tz_offset_min=0):
             "manual_bolus_u": manual_total_u,
             "smb_count": len(smbs),
             "smb_u": smb_total_u,
+            "smb_detect": smb_detect,
             "manual_share_pct": manual_share,
             "carb_entries": len(carbs),
             "lows_after_manual": lows_after_manual,

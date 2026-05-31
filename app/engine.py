@@ -154,19 +154,7 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
                 "PkpdCorrectionPrudence.kt (neutral = 0.75/1.25)",
             ))
 
-    # ---- 6. SENSITIVITY RAISES TARGET (asymmetry check) ----
-    srt = s.get("sensitivity_raises_target")
-    rlt = s.get("resistance_lowers_target")
-    if srt is False and rlt is True and low > 3:
-        recs.append(_rec(
-            "sens_target", SEV_WARN,
-            "Enable 'Sensitivity raises target'",
-            "You have resistance-lowers-target ON but sensitivity-raises-target OFF — "
-            "a one-way ratchet. During sensitive periods the target never rises to protect you. "
-            "Both flags are checked independently in the code.",
-            "OFF", "ON",
-            "DetermineBasalAIMI2.kt line ~2571",
-        ))
+    # ---- 6. (Sensitivity/Resistance target toggles removed from advisor) ----
 
     # ---- 7. LEARNING PACE (PkpdLearningPace) ----
     pace = s.get("learning_pace")
@@ -373,6 +361,7 @@ def pkpd_recommendations(analysis, profile, s, tdd):
             if r:
                 it["info_short"] = r.get("short")
                 it["info_long"] = r.get("long")
+                it["location"] = r.get("location")
                 it["effect_up"] = r.get("effect_up")
                 it["effect_down"] = r.get("effect_down")
     except Exception:
@@ -449,8 +438,6 @@ def build_slider_groups(analysis, profile, settings, pkpd, tdd):
         rec["DynamicISF factor"] = (100, "AIMI builds ISF itself; 100% avoids double-aggression.")
     if s.get("smb_interval") is not None:
         rec["SMB interval"] = (_num(s.get("smb_interval")) or 6, "6 min is standard.")
-    rec["Sensitivity raises target"] = (True, "Enable for symmetric protection during sensitive periods.")
-    rec["Resistance lowers target"] = (s.get("resistance_lowers_target", True), "Fine as set.")
 
     # PK/PD items -> recommended values from the pkpd block
     for it in (pkpd.get("items") or []):
@@ -467,8 +454,6 @@ def build_slider_groups(analysis, profile, settings, pkpd, tdd):
         "DynamicISF factor": s.get("dynisf_factor"),
         "TDD7": s.get("tdd7"),
         "SMB interval": s.get("smb_interval"),
-        "Sensitivity raises target": s.get("sensitivity_raises_target"),
-        "Resistance lowers target": s.get("resistance_lowers_target"),
         "Insulin preset": s.get("insulin_type"),
         "Initial DIA": s.get("pkpd_initial_dia"),
         "ISF fusion min factor": s.get("isf_fusion_min"),

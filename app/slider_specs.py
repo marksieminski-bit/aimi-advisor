@@ -38,8 +38,7 @@ SLIDER_SPECS = {
     "DynamicISF factor":    {"group": "Main AIMI", "type": "range", "min": 50, "max": 200, "step": 5, "unit": "%"},
     "TDD7":                 {"group": "Main AIMI", "type": "range", "min": 20, "max": 80, "step": 1, "unit": "U"},
     "SMB interval":         {"group": "Main AIMI", "type": "range", "min": 1, "max": 10, "step": 1, "unit": "min"},
-    "Sensitivity raises target": {"group": "Main AIMI", "type": "toggle"},
-    "Resistance lowers target":  {"group": "Main AIMI", "type": "toggle"},
+    # (Sensitivity raises target / Resistance lowers target removed from advisor UI)
 
     # ---- Insulin Model ----
     "Insulin preset":       {"group": "Insulin Model", "type": "choice",
