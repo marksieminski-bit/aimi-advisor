@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIMI Advisor · Users</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⬡</div>
+      <div>
+        <h1>AIMI Settings Advisor</h1>
+        <div class="subtitle">Self-hosted glucose analysis · Nightscout connected</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="section-title">Profiles</div>
+  <div id="userList" class="grid-3 mb-32"></div>
+
+  <div class="section-title">Add New Profile</div>
+  <div class="card mb-32" style="max-width:640px">
+    <div class="form-row">
+      <label>Name</label>
+      <input id="f_name" placeholder="e.g. Mark">
+    </div>
+    <div class="form-row">
+      <label>Nightscout URL</label>
+      <input id="f_url" placeholder="https://yoursite.example.org">
+    </div>
+    <div class="form-row">
+      <label>Access Token <span class="muted">(recommended)</span></label>
+      <input id="f_token" placeholder="readable-abc123… (from NS Admin Tools)">
+    </div>
+    <div class="form-row">
+      <label>API Secret <span class="muted">(alternative to token)</span></label>
+      <input id="f_secret" type="password" placeholder="your API_SECRET passphrase">
+    </div>
+    <div class="form-row">
+      <label>Timezone Offset (minutes from UTC)</label>
+      <input id="f_tz" type="number" value="-240" placeholder="-240 for EDT">
+    </div>
+    <div class="annotation annotation-info">
+      💡 A read-only <strong>token</strong> is safest. In Nightscout: Admin Tools → add a
+      subject with the <em>readable</em> role → copy its access token.
+    </div>
+    <button class="btn btn-primary" onclick="createUser()">Create Profile</button>
+    <div id="createMsg" class="msg"></div>
+  </div>
+</div>
+
+<script>
+async function loadUsers() {
+  const r = await fetch('/api/users');
+  const users = await r.json();
+  const el = document.getElementById('userList');
+  if (!users.length) { el.innerHTML = '<div class="muted">No profiles yet. Add one below.</div>'; return; }
+  el.innerHTML = users.map(u => `
+    <div class="card user-card">
+      <div class="user-name">${esc(u.name)}</div>
+      <div class="user-url">${esc(u.ns_url)}</div>
+      <div class="user-actions">
+        <a class="btn btn-sm btn-primary" href="/dashboard/${u.id}">Analyze →</a>
+        <button class="btn btn-sm" onclick="testConn(${u.id}, this)">Test</button>
+        <button class="btn btn-sm btn-danger" onclick="delUser(${u.id})">Delete</button>
+      </div>
+      <div class="test-result" id="test-${u.id}"></div>
+    </div>`).join('');
+}
+
+async function createUser() {
+  const msg = document.getElementById('createMsg');
+  const body = {
+    name: val('f_name'), ns_url: val('f_url'),
+    ns_token: val('f_token'), ns_secret: val('f_secret'),
+    tz_offset_min: parseInt(val('f_tz') || '0'),
+  };
+  if (!body.name || !body.ns_url) { msg.textContent = 'Name and URL required.'; msg.className='msg err'; return; }
+  const r = await fetch('/api/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (r.ok) {
+    msg.textContent = 'Profile created.'; msg.className='msg ok';
+    ['f_name','f_url','f_token','f_secret'].forEach(i => document.getElementById(i).value='');
+    loadUsers();
+  } else {
+    const e = await r.json(); msg.textContent = e.error || 'Failed.'; msg.className='msg err';
+  }
+}
+
+async function testConn(uid, btn) {
+  const out = document.getElementById('test-'+uid);
+  btn.disabled = true; out.textContent = 'Testing…'; out.className='test-result';
+  const r = await fetch(`/api/users/${uid}/test`, {method:'POST'});
+  const d = await r.json();
+  btn.disabled = false;
+  if (d.ok) { out.textContent = `✓ Connected: ${d.status.name||'Nightscout'} ${d.status.version||''}`; out.className='test-result ok'; }
+  else { out.textContent = `✗ ${d.error}`; out.className='test-result err'; }
+}
+
+async function delUser(uid) {
+  if (!confirm('Delete this profile and its reports?')) return;
+  await fetch(`/api/users/${uid}`, {method:'DELETE'});
+  loadUsers();
+}
+
+function val(id){return document.getElementById(id).value.trim();}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+loadUsers();
+</script>
+</body>
+</html>

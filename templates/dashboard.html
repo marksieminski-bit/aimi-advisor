@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIMI Advisor · {{ user.name }}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⬡</div>
+      <div>
+        <h1>{{ user.name }} · Analysis</h1>
+        <div class="subtitle"><a href="/" class="link">← All profiles</a> · AIMI Settings Advisor</div>
+      </div>
+    </div>
+    <div>
+      <select id="daySelect" class="day-select">
+        <option value="15">15 days</option>
+        <option value="30">30 days</option>
+      </select>
+      <span id="unitsBadge" class="units-badge" title="Auto-detected from Nightscout"></span>
+      <button class="btn btn-primary" id="runBtn" onclick="runAnalysis()">Run Analysis</button>
+      <div class="settings-link"><a href="#" class="link" onclick="toggleSettings();return false;">⚙ Edit AIMI settings</a></div>
+    </div>
+  </header>
+
+  <!-- Settings editor (hidden by default) -->
+  <div id="settingsPanel" class="card mb-32" style="display:none">
+    <div class="section-title">AIMI Settings (used by the recommendations engine)</div>
+    <div class="annotation annotation-info" style="margin-bottom:18px">
+      <b>Why fill this in?</b> Enter your <b>current</b> AIMI values here so the app can compare them
+      against what it recommends. This is what fills the "currently X" in the checklist, the grey
+      current-marker on each slider, and the change highlighting. Without it, the app only sees your
+      glucose data and profile — it can suggest targets but can't tell you which of <i>your</i> settings need changing.
+    </div>
+
+    <div class="import-box">
+      <div class="import-head">📁 Import from AndroidAPS settings file</div>
+      <div class="import-desc">
+        Fastest, most accurate way to fill these in. In AAPS: <b>Maintenance → Export settings</b>.
+        Choose your export file or paste its contents. If the export is <b>encrypted</b>, enter your
+        AAPS master password below so it can be read.
+      </div>
+      <input type="file" id="importFile" accept=".json,application/json" onchange="importFromFile(event)">
+      <div class="import-or">or paste JSON:</div>
+      <textarea id="importText" class="import-text" placeholder='{"content": "...", "security": {...}}'></textarea>
+      <div class="import-pw-row">
+        <input type="password" id="importPw" class="import-pw" placeholder="AAPS master password (only if encrypted)" autocomplete="off">
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="importFromText()">Import settings</button>
+      <span id="importMsg" class="msg"></span>
+      <div class="import-note">🔒 The password is used only to decrypt this file on your own server and is never stored.</div>
+    </div>
+    <div class="grid-3">
+      <div class="form-row"><label>LGS threshold (mmol/L)</label><input id="s_lgs" type="number" step="0.1"></div>
+      <div class="form-row"><label>Max IOB (U)</label><input id="s_maxiob" type="number" step="0.5"></div>
+      <div class="form-row"><label>TDD7 (U)</label><input id="s_tdd7" type="number" step="1"></div>
+      <div class="form-row"><label>PK/PD Initial DIA (h)</label><input id="s_dia" type="number" step="0.1"></div>
+      <div class="form-row"><label>ISF Fusion Min</label><input id="s_isfmin" type="number" step="0.01"></div>
+      <div class="form-row"><label>ISF Fusion Max</label><input id="s_isfmax" type="number" step="0.01"></div>
+      <div class="form-row"><label>SMB Tail Damping</label><input id="s_tail" type="number" step="0.01"></div>
+      <div class="form-row"><label>Insulin Type</label>
+        <select id="s_insulin"><option value="ultrafast">Ultra-fast (Fiasp)</option><option value="rapid">Rapid (Humalog)</option><option value="standard">Standard</option></select>
+      </div>
+      <div class="form-row"><label>Learning Pace</label>
+        <select id="s_pace"><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select>
+      </div>
+      <div class="form-row checkbox-row"><label><input id="s_srt" type="checkbox"> Sensitivity raises target</label></div>
+      <div class="form-row checkbox-row"><label><input id="s_rlt" type="checkbox"> Resistance lowers target</label></div>
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+    <span id="settingsMsg" class="msg"></span>
+  </div>
+
+  <div id="loading" class="loading" style="display:none">
+    <div class="spinner"></div>
+    <div>Fetching from Nightscout & analyzing…</div>
+  </div>
+
+  <div id="error" class="annotation annotation-danger" style="display:none"></div>
+
+  <div id="results" style="display:none">
+    <!-- Immediate / critical recommendations banner -->
+    <div id="immediateBanner"></div>
+
+    <!-- Score -->
+    <div class="section-title">
+      <span>Overall Assessment</span>
+      <button class="btn btn-sm" onclick="printReport()" style="margin-left:auto" id="printBtn">🖨 Print / Export</button>
+    </div>
+    <div class="score-section mb-32">
+      <div class="score-ring">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#1e2433" stroke-width="10"/>
+          <circle id="scoreArc" cx="60" cy="60" r="50" fill="none" stroke="url(#sg)" stroke-width="10"
+            stroke-dasharray="314" stroke-dashoffset="314" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+          <defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#7ee8a2"/><stop offset="100%" stop-color="#38bdf8"/>
+          </linearGradient></defs>
+        </svg>
+        <div class="score-inner"><span class="score-num" id="scoreNum">–</span><span class="score-of">/ 100</span></div>
+      </div>
+      <div class="score-info">
+        <div class="score-title" id="scoreTitle"></div>
+        <div class="score-desc" id="scoreSummary"></div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="section-title">Blood Glucose Metrics</div>
+    <div class="grid-4 mb-32" id="metrics"></div>
+
+    <!-- TIR + Hourly -->
+    <div class="grid-2 mb-32">
+      <div class="card">
+        <div class="card-label">Time in Range</div>
+        <div id="tirLegend" style="margin-top:16px"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Average Glucose by Hour · mmol/L</div>
+        <div class="chart-container" style="margin-top:12px"><canvas id="hourlyChart" height="180"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Recommendations -->
+    <div class="section-title">Recommendations <span id="recCounts" class="muted"></span></div>
+    <div id="recList" class="mb-32"></div>
+
+    <!-- Manual bolus / meal analysis -->
+    <div class="section-title">Boluses &amp; Meals · What the data shows</div>
+    <div id="bolusSummary" class="mb-32"></div>
+
+    <!-- Feedback-driven generator -->
+    <div class="section-title">Tell the app what you're experiencing</div>
+    <div class="card mb-32">
+      <div class="annotation annotation-info" style="margin-bottom:16px">
+        Pick what's been happening. The app generates specific settings to consider,
+        explains the logic, and <b>checks each against your Nightscout data</b> — telling you
+        honestly whether the numbers back up what you're feeling.
+      </div>
+      <div id="feedbackOptions" class="feedback-opts"></div>
+      <div style="margin-top:14px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="runFeedback()">Generate suggestions</button>
+        <button class="btn btn-sm" onclick="clearFeedback()">Clear</button>
+      </div>
+      <div id="feedbackResults" style="margin-top:18px"></div>
+    </div>
+
+    <!-- AIMI-style settings sliders -->
+    <div class="section-title">Settings · Current vs Recommended</div>
+    <div class="annotation annotation-info" style="margin-bottom:20px">
+      Each track shows your <span style="color:var(--muted)">current</span> value and the
+      <span style="color:var(--accent)">recommended</span> target, grouped like AIMI's settings screens.
+      Tap a setting name for details.
+    </div>
+    <div class="slider-legend">
+      <span><span class="legend-mark" style="background:#cbd5e1"></span> Current</span>
+      <span><span class="legend-mark" style="background:var(--accent);box-shadow:0 0 8px rgba(126,232,162,0.6)"></span> Recommended</span>
+    </div>
+    <div id="sliderGroups" class="mb-32"></div>
+
+    <!-- Apply changes: checklist + export -->
+    <div class="section-title">Apply These Changes</div>
+    <div class="card mb-32">
+      <div class="checklist-head">
+        <div class="checklist-title" id="checklistCount">—</div>
+        <div class="checklist-actions">
+          <button class="btn btn-sm btn-primary" id="copyBtn" onclick="copyChecklist()">📋 Copy checklist</button>
+          <button class="btn btn-sm" onclick="downloadPrefs()" title="Advanced — see warning">⬇ Prefs file</button>
+        </div>
+      </div>
+      <pre class="checklist-box" id="checklistBox"></pre>
+      <div class="annotation annotation-danger">
+        ⚠ <b>Set these manually in AIMI</b> — this is the safe path. The "Prefs file" is an
+        advanced convenience: AAPS can't be written to by other apps, so you'd merge it into a
+        settings backup yourself. A wrong key or format can corrupt your config. Most users should
+        use the copy checklist and change values by hand. Review every change with your care team.
+      </div>
+    </div>
+
+    <!-- PK/PD recommended configuration -->
+    <div class="section-title">Recommended PK/PD Configuration</div>
+    <div id="pkpdNotes"></div>
+    <div class="pkpd-section">
+      <table class="pkpd-table">
+        <thead><tr><th>Setting</th><th>Recommended</th><th>Your Current</th><th>Why</th><th></th></tr></thead>
+        <tbody id="pkpdBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Full glossary -->
+    <div class="section-title">
+      <span>PK/PD Settings Glossary</span>
+      <button class="btn btn-sm" onclick="toggleGlossary()" id="glossaryBtn" style="margin-left:auto">Show all descriptions</button>
+    </div>
+    <div id="glossary" style="display:none" class="mb-32"></div>
+
+    <div class="annotation annotation-warn">
+      ⚠ This analysis is informational only. All setting changes should be reviewed with your diabetes care team before applying.
+    </div>
+  </div>
+
+  <!-- Info modal -->
+  <div id="infoModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeInfo()">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeInfo()">✕</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const UID = {{ user.id }};
+const MIN_DAYS = {{ min_days }};
+let userSettings = {};
+
+async function loadSettings() {
+  const r = await fetch(`/api/users/${UID}`);
+  const u = await r.json();
+  userSettings = u.settings || {};
+  const s = userSettings;
+  setv('s_lgs', s.lgs_threshold); setv('s_maxiob', s.max_iob); setv('s_tdd7', s.tdd7);
+  setv('s_dia', s.pkpd_initial_dia); setv('s_isfmin', s.isf_fusion_min); setv('s_isfmax', s.isf_fusion_max);
+  setv('s_tail', s.smb_tail_damping);
+  if (s.insulin_type) document.getElementById('s_insulin').value = s.insulin_type;
+  if (s.learning_pace) document.getElementById('s_pace').value = s.learning_pace;
+  document.getElementById('s_srt').checked = !!s.sensitivity_raises_target;
+  document.getElementById('s_rlt').checked = !!s.resistance_lowers_target;
+}
+
+function toggleSettings(){ const p=document.getElementById('settingsPanel'); p.style.display = p.style.display==='none'?'block':'none'; }
+
+async function saveSettings() {
+  const s = {
+    lgs_threshold: numv('s_lgs'), max_iob: numv('s_maxiob'), tdd7: numv('s_tdd7'),
+    pkpd_initial_dia: numv('s_dia'), isf_fusion_min: numv('s_isfmin'), isf_fusion_max: numv('s_isfmax'),
+    smb_tail_damping: numv('s_tail'),
+    insulin_type: document.getElementById('s_insulin').value,
+    learning_pace: document.getElementById('s_pace').value,
+    sensitivity_raises_target: document.getElementById('s_srt').checked,
+    resistance_lowers_target: document.getElementById('s_rlt').checked,
+  };
+  const r = await fetch(`/api/users/${UID}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({settings: s})});
+  const msg = document.getElementById('settingsMsg');
+  if (r.ok){ msg.textContent='Saved.'; msg.className='msg ok'; userSettings=s; } else { msg.textContent='Failed.'; msg.className='msg err'; }
+}
+
+function importFromFile(ev){
+  const f = ev.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    document.getElementById('importText').value = reader.result;
+    // If it looks encrypted, prompt for password instead of auto-importing
+    if(/"algorithm"\s*:\s*"v1"/.test(reader.result) || /"security"/.test(reader.result)){
+      const msg = document.getElementById('importMsg');
+      msg.textContent = 'Encrypted file loaded — enter your master password, then click Import.';
+      msg.className = 'msg';
+      document.getElementById('importPw').focus();
+    } else {
+      importFromText();
+    }
+  };
+  reader.readAsText(f);
+}
+async function importFromText(){
+  const text = document.getElementById('importText').value.trim();
+  const password = document.getElementById('importPw').value;
+  const msg = document.getElementById('importMsg');
+  if(!text){ msg.textContent='Paste the export contents or choose a file first.'; msg.className='msg err'; return; }
+  msg.textContent='Importing…'; msg.className='msg';
+  try{
+    const r = await fetch(`/api/users/${UID}/import_settings`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, password})});
+    const d = await r.json();
+    if(!r.ok){
+      msg.textContent = d.message || d.error || 'Import failed.'; msg.className='msg err';
+      if(d.error==='password_required' || d.error==='wrong_password'){ document.getElementById('importPw').focus(); }
+      return;
+    }
+    const encNote = d.encrypted ? ' (decrypted)' : '';
+    msg.textContent = `✓ Imported ${d.matched_count} setting(s) from ${d.total_keys} keys${encNote}.`; msg.className='msg ok';
+    document.getElementById('importPw').value = '';  // clear password from the field
+    userSettings = d.settings;
+    fillSettingsForm(d.settings);
+    if(d.units){ setUnits(d.units); }
+  }catch(e){ msg.textContent='Error: '+e.message; msg.className='msg err'; }
+}
+function fillSettingsForm(s){
+  setv('s_lgs', s.lgs_threshold); setv('s_maxiob', s.max_iob); setv('s_tdd7', s.tdd7);
+  setv('s_dia', s.pkpd_initial_dia); setv('s_isfmin', s.isf_fusion_min); setv('s_isfmax', s.isf_fusion_max);
+  setv('s_tail', s.smb_tail_damping);
+  if(s.insulin_type) document.getElementById('s_insulin').value = s.insulin_type;
+  if(s.learning_pace) document.getElementById('s_pace').value = s.learning_pace;
+  if(s.sensitivity_raises_target!=null) document.getElementById('s_srt').checked = !!s.sensitivity_raises_target;
+  if(s.resistance_lowers_target!=null) document.getElementById('s_rlt').checked = !!s.resistance_lowers_target;
+}
+let CURRENT_UNITS = 'mmol';
+function setUnits(u){
+  CURRENT_UNITS = (u==='mgdl')?'mgdl':'mmol';
+  const b = document.getElementById('unitsBadge');
+  if(b){ b.textContent = CURRENT_UNITS==='mgdl'?'mg/dL':'mmol/L'; }
+}
+
+async function runAnalysis() {
+  document.getElementById('loading').style.display='flex';
+  document.getElementById('results').style.display='none';
+  document.getElementById('error').style.display='none';
+  document.getElementById('runBtn').disabled = true;
+  try {
+    const days = document.getElementById('daySelect').value || MIN_DAYS;
+    const r = await fetch(`/api/users/${UID}/analyze?days=${days}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) {
+      document.getElementById('error').textContent = d.message || d.error || 'Analysis failed.';
+      document.getElementById('error').style.display='block';
+    } else {
+      document.getElementById('results').style.display='block';
+      render(d);
+    }
+  } catch(e) {
+    document.getElementById('error').textContent = 'Error: '+e.message;
+    document.getElementById('error').style.display='block';
+  }
+  document.getElementById('loading').style.display='none';
+  document.getElementById('runBtn').disabled = false;
+}
+
+function render(d) {
+  const a = d.analysis, res = d.result;
+  if(d.units) setUnits(d.units);
+  // Score
+  document.getElementById('scoreNum').textContent = res.score;
+  document.getElementById('scoreNum').style.color = res.score>=75?'#7ee8a2':res.score>=55?'#fbbf24':'#f87171';
+  const arc = document.getElementById('scoreArc');
+  arc.style.strokeDashoffset = 314 - (314 * res.score/100);
+  document.getElementById('scoreTitle').textContent =
+    res.score>=75?'Good Control':res.score>=55?'Needs Attention':'Significant Gaps';
+  document.getElementById('scoreSummary').textContent = res.summary;
+
+  // Metrics
+  const t = a.tir;
+  document.getElementById('metrics').innerHTML = `
+    ${metric('Time in Range', a.tir.in_range+'%', a.tir.in_range>=70?'ok':'danger', 'Target >70%')}
+    ${metric('Below 3.9', (t.low+t.very_low).toFixed(1)+'%', (t.low+t.very_low)<=4?'ok':'danger', 'Target <4%')}
+    ${metric('Mean Glucose', a.mean_mmol+' mmol/L', 'info', 'GMI ≈ '+a.gmi+'%')}
+    ${metric('Variability', a.cv+'%', a.cv<=36?'ok':'warn', 'CV target <36%')}`;
+
+  // TIR legend
+  const zones = [
+    ['Very Low <2.8', t.very_low, '#ef4444', '<1%'],
+    ['Low 2.8–3.9', t.low, '#f97316', '<4%'],
+    ['In Range 3.9–10', t.in_range, '#22c55e', '>70%'],
+    ['High 10–13.9', t.high, '#eab308', '<25%'],
+    ['Very High >13.9', t.very_high, '#dc2626', '<5%'],
+  ];
+  document.getElementById('tirLegend').innerHTML = zones.map(([n,p,c,tg])=>`
+    <div class="tir-row">
+      <div class="tir-dot" style="background:${c}"></div>
+      <div class="tir-name">${n}</div>
+      <div class="tir-bar-wrap"><div class="tir-bar" style="width:${Math.min(p,100)}%;background:${c}"></div></div>
+      <div class="tir-pct" style="color:${c}">${p}%</div>
+      <div class="tir-target">${tg}</div>
+    </div>`).join('');
+
+  // Recommendations
+  const sevOrder = {critical:0, warn:1, info:2, ok:3};
+  const recs = [...res.recommendations].sort((x,y)=>sevOrder[x.severity]-sevOrder[y.severity]);
+
+  // Immediate banner: critical first, then warnings. Empty if none.
+  const urgent = recs.filter(r=>r.severity==='critical');
+  const warns = recs.filter(r=>r.severity==='warn');
+  const banner = document.getElementById('immediateBanner');
+  if(urgent.length || warns.length){
+    const top = urgent.length?urgent:warns;
+    const kind = urgent.length?'critical':'warn';
+    banner.innerHTML = `
+      <div class="immediate ${kind}">
+        <div class="immediate-head">
+          <span class="immediate-icon">${urgent.length?'🔴':'🟡'}</span>
+          <span class="immediate-title">${urgent.length?'Immediate attention':'Recommended changes'}</span>
+          <span class="immediate-count">${urgent.length?(urgent.length+' critical'):(warns.length+' to review')}</span>
+        </div>
+        <div class="immediate-items">
+          ${top.slice(0,4).map(r=>`<div class="immediate-item">
+            <span class="ii-title">${esc(r.title.replace(/^[🔴🟡🟢]\s*/,''))}</span>
+            ${r.current?`<span class="ii-change"><span class="from">${esc(r.current)}</span> → <b>${esc(r.recommended||'')}</b></span>`:''}
+          </div>`).join('')}
+        </div>
+        <div class="immediate-foot">Full details below. Review every change with your care team before applying.</div>
+      </div>`;
+  } else {
+    banner.innerHTML = `<div class="immediate ok"><div class="immediate-head"><span class="immediate-icon">✓</span><span class="immediate-title">No urgent changes</span></div><div class="immediate-foot">Your settings look well-tuned for the data analyzed.</div></div>`;
+  }
+
+  document.getElementById('recCounts').textContent =
+    `· ${res.counts.critical} critical, ${res.counts.warn} warnings`;
+  if (!recs.length) {
+    document.getElementById('recList').innerHTML = '<div class="annotation annotation-ok">✓ No issues found — settings look well-tuned for your data.</div>';
+  } else {
+    document.getElementById('recList').innerHTML = recs.map((r,i)=>{
+      const cls = r.severity==='critical'?'p-critical':r.severity==='warn'?'p-warn':'p-ok';
+      const icon = r.severity==='critical'?'🔴':r.severity==='warn'?'🟡':'🟢';
+      const change = r.current ? `<span class="from">${esc(r.current)}</span><span class="to">→ ${esc(r.recommended||'')}</span>` : '';
+      return `<div class="priority-item">
+        <div class="priority-num ${cls}">${i+1}</div>
+        <div class="priority-content">
+          <div class="priority-title">${icon} ${esc(r.title)}</div>
+          <div class="priority-detail">${esc(r.detail)}</div>
+          ${r.code_ref?`<div class="code-ref">📄 ${esc(r.code_ref)}</div>`:''}
+        </div>
+        <div class="priority-change">${change}</div>
+      </div>`;
+    }).join('');
+  }
+
+  drawHourly(a.hourly);
+  renderPkpd(res.pkpd);
+  renderSliders(res.slider_groups);
+  renderChecklist(res);
+  renderBolus(d.bolus);
+  loadFeedbackOptions();
+  // redraw chart after layout settles (results div was just shown)
+  requestAnimationFrame(()=>requestAnimationFrame(()=>drawHourly()));
+}
+
+function renderSliders(groups){
+  if(!groups){ return; }
+  const el = document.getElementById('sliderGroups');
+  el.innerHTML = groups.map((g,gi)=>`
+    <div class="slider-group">
+      <div class="slider-group-title">${esc(g.group)}</div>
+      <div class="aimi-grid">${g.items.map((it,ii)=>sliderRow(it,gi,ii)).join('')}</div>
+    </div>`).join('');
+  window._sliderItems = {};
+  groups.forEach((g,gi)=>g.items.forEach((it,ii)=>{ window._sliderItems[gi+'-'+ii]=it; }));
+}
+
+let lastChecklist = '';
+function renderChecklist(res){
+  const cl = res.checklist;
+  if(!cl) return;
+  lastChecklist = cl.text;
+  const el = document.getElementById('checklistBox');
+  const n = cl.change_count;
+  document.getElementById('checklistCount').textContent = n ? `${n} change${n>1?'s':''} to make` : 'No changes needed';
+  el.textContent = cl.text;
+  // prefs file availability
+  window._prefsKv = res.prefs_kv || {};
+}
+function copyChecklist(){
+  navigator.clipboard.writeText(lastChecklist).then(()=>{
+    const b=document.getElementById('copyBtn'); const t=b.textContent; b.textContent='✓ Copied'; setTimeout(()=>b.textContent=t,1500);
+  });
+}
+function downloadPrefs(){
+  const kv = window._prefsKv||{};
+  const blob = new Blob([JSON.stringify(kv,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='aimi_recommended_prefs.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function sliderRow(it,gi,ii){
+  const key = gi+'-'+ii;
+  const changed = it.status==='diff';
+  // Toggle: AIMI-style pill switch showing recommended state
+  if(it.type==='toggle'){
+    const cur = truthy(it.current), rec = truthy(it.recommended);
+    return `<div class="aimi-card ${changed?'changed':''}">
+      <div class="aimi-head">
+        <div class="aimi-name" onclick="showSliderInfo('${key}')">${esc(it.name)} <span class="info-dot">i</span></div>
+        <div class="aimi-switch ${rec?'on':''}"><div class="aimi-knob"></div></div>
+      </div>
+      <div class="aimi-sub">Recommended: <b>${rec?'ON':'OFF'}</b>${cur!==null?` · currently ${cur?'ON':'OFF'}`:''}</div>
+    </div>`;
+  }
+  // Choice: AIMI-style segmented chips
+  if(it.type==='choice'){
+    return `<div class="aimi-card ${changed?'changed':''}">
+      <div class="aimi-head"><div class="aimi-name" onclick="showSliderInfo('${key}')">${esc(it.name)} <span class="info-dot">i</span></div></div>
+      <div class="aimi-chips">
+        ${(it.options||[]).map(o=>{
+          const first=(''+o).toLowerCase().split(' ')[0];
+          const isCur = it.current && (''+it.current).toLowerCase().includes(first);
+          const isRec = it.recommended && (''+it.recommended).toLowerCase().includes(first);
+          let cls='aimi-chip'; if(isRec)cls+=' rec'; if(isCur)cls+=' cur';
+          return `<span class="${cls}">${esc(o)}</span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  // Range: AIMI stepper (− [value] +) with purple slider fill, recommended value shown big
+  const min=it.min, max=it.max, span=(max-min)||1;
+  const recVal = it.recommended_num;
+  const curVal = it.current_num;
+  const recPct = recVal!=null ? Math.max(0,Math.min(100,(recVal-min)/span*100)) : 0;
+  const curPct = curVal!=null ? Math.max(0,Math.min(100,(curVal-min)/span*100)) : null;
+  const unit = it.unit?(' '+it.unit):'';
+  const recDisp = recVal!=null?recVal:(it.recommended||'—');
+  return `<div class="aimi-card ${changed?'changed':''}">
+    <div class="aimi-head">
+      <div class="aimi-name" onclick="showSliderInfo('${key}')">${esc(it.name)} <span class="info-dot">i</span></div>
+    </div>
+    <div class="aimi-stepper">
+      <div class="aimi-minus">−</div>
+      <div class="aimi-slider">
+        <div class="aimi-slider-fill" style="width:${recPct}%"></div>
+        <div class="aimi-slider-knob" style="left:${recPct}%"></div>
+        ${curPct!=null?`<div class="aimi-cur-tick" style="left:${curPct}%" title="Your current: ${curVal}${unit}"></div>`:''}
+      </div>
+      <div class="aimi-plus">+</div>
+      <div class="aimi-value">${esc(''+recDisp)}<span class="aimi-unit">${esc(it.unit||'')}</span></div>
+    </div>
+    <div class="aimi-sub">
+      ${curVal!=null?`Your current: <b class="${changed?'cur-diff':''}">${curVal}${unit}</b> → ` : ''}
+      <b class="rec-val">${recDisp}${unit}</b> recommended
+    </div>
+  </div>`;
+}
+
+function showSliderInfo(key){
+  const it = (window._sliderItems||{})[key];
+  if(!it) return;
+  let h = `<h3>${esc(it.name)}</h3>`;
+  const unit = it.unit?(' '+it.unit):'';
+  h += `<div class="info-target">`;
+  if(it.current_num!=null) h += `Current: <strong>${it.current_num}${unit}</strong> &nbsp;·&nbsp; `;
+  h += `Recommended: <strong>${esc(it.recommended_num!=null?(it.recommended_num+unit):(it.recommended||'—'))}</strong></div>`;
+  if(it.info_long) h += `<p>${esc(it.info_long)}</p>`;
+  else if(it.reason) h += `<p>${esc(it.reason)}</p>`;
+  if(it.effect_up||it.effect_down){
+    h += `<div class="info-effects">`;
+    if(it.effect_up) h += `<div class="info-eff"><span class="up">▲ Higher</span> ${esc(it.effect_up)}</div>`;
+    if(it.effect_down) h += `<div class="info-eff"><span class="down">▼ Lower</span> ${esc(it.effect_down)}</div>`;
+    h += `</div>`;
+  }
+  if(it.code) h += `<div class="info-code">Code: ${esc(it.code)}</div>`;
+  document.getElementById('modalContent').innerHTML = h;
+  document.getElementById('infoModal').style.display='flex';
+}
+function truthy(v){ if(v===null||v===undefined||v==='')return null; if(typeof v==='boolean')return v; const s=(''+v).toLowerCase(); if(['on','true','1','yes','enabled'].includes(s))return true; if(['off','false','0','no','disabled'].includes(s))return false; return null; }
+
+let lastPkpdItems = [];
+function renderPkpd(pkpd){
+  if(!pkpd){ return; }
+  const notes = document.getElementById('pkpdNotes');
+  notes.innerHTML = (pkpd.notes||[]).map(n=>`<div class="pkpd-note">${esc(n)}</div>`).join('');
+  const body = document.getElementById('pkpdBody');
+  lastPkpdItems = pkpd.items || [];
+  body.innerHTML = lastPkpdItems.map((it,idx)=>{
+    let curCls = 'pkpd-current', cur = it.current || '—';
+    if(it.current){
+      const t = (''+it.target).replace(/[^0-9.]/g,'');
+      const c = (''+it.current).replace(/[^0-9.]/g,'');
+      if(t && c && Math.abs(parseFloat(t)-parseFloat(c))<0.001) curCls+=' match';
+      else if(t && c) curCls+=' diff';
+    }
+    const hasInfo = it.info_long || it.info_short;
+    return `<tr>
+      <td class="pkpd-name">${esc(it.name)}</td>
+      <td class="pkpd-target">${esc(it.target)}</td>
+      <td class="${curCls}">${esc(cur)}</td>
+      <td class="pkpd-reason">${esc(it.reason)}${it.code_ref?`<span class="pkpd-code">📄 ${esc(it.code_ref)}</span>`:''}</td>
+      <td>${hasInfo?`<button class="info-btn" onclick="showInfo(${idx})" title="What does this do?">i</button>`:''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function showInfo(idx){
+  const it = lastPkpdItems[idx];
+  if(!it) return;
+  let html = `<h3>${esc(it.name)}</h3>`;
+  html += `<div class="info-target">Recommended for you: <strong>${esc(it.target)}</strong></div>`;
+  if(it.info_long) html += `<p>${esc(it.info_long)}</p>`;
+  if(it.effect_up||it.effect_down){
+    html += `<div class="info-effects">`;
+    if(it.effect_up) html += `<div class="info-eff"><span class="up">▲ Higher</span> ${esc(it.effect_up)}</div>`;
+    if(it.effect_down) html += `<div class="info-eff"><span class="down">▼ Lower</span> ${esc(it.effect_down)}</div>`;
+    html += `</div>`;
+  }
+  if(it.code_ref) html += `<div class="info-code">Code: ${esc(it.code_ref)}</div>`;
+  document.getElementById('modalContent').innerHTML = html;
+  document.getElementById('infoModal').style.display='flex';
+}
+function closeInfo(){ document.getElementById('infoModal').style.display='none'; }
+
+let glossaryLoaded = false;
+async function toggleGlossary(){
+  const g = document.getElementById('glossary'), btn = document.getElementById('glossaryBtn');
+  if(g.style.display==='none'){
+    if(!glossaryLoaded){
+      const ref = await (await fetch('/api/reference')).json();
+      const groups = {};
+      Object.entries(ref).forEach(([name,r])=>{
+        const grp = r.group||'Other';
+        (groups[grp] = groups[grp]||[]).push([name,r]);
+      });
+      g.innerHTML = Object.entries(groups).map(([grp,items])=>`
+        <div class="gloss-group">
+          <div class="gloss-group-title">${esc(grp)}</div>
+          ${items.map(([name,r])=>`
+            <div class="gloss-item">
+              <div class="gloss-name">${esc(name)}</div>
+              <div class="gloss-short">${esc(r.short||'')}</div>
+              <div class="gloss-long">${esc(r.long||'')}</div>
+              ${(r.effect_up||r.effect_down)?`<div class="gloss-effects">
+                ${r.effect_up?`<div><span class="up">▲ Higher</span> ${esc(r.effect_up)}</div>`:''}
+                ${r.effect_down?`<div><span class="down">▼ Lower</span> ${esc(r.effect_down)}</div>`:''}
+              </div>`:''}
+              ${r.code?`<div class="gloss-code">📄 ${esc(r.code)}</div>`:''}
+            </div>`).join('')}
+        </div>`).join('');
+      glossaryLoaded = true;
+    }
+    g.style.display='block'; btn.textContent='Hide descriptions';
+  } else {
+    g.style.display='none'; btn.textContent='Show all descriptions';
+  }
+}
+
+function metric(label, val, sev, sub){
+  const col = {ok:'#4ade80',danger:'#f87171',warn:'#fbbf24',info:'#38bdf8'}[sev];
+  return `<div class="card"><div class="card-label">${label}</div>
+    <div class="card-value" style="color:${col}">${val}</div>
+    <div class="card-sub">${sub}</div></div>`;
+}
+
+let _hourlyData = null;
+function drawHourly(hourly){
+  if(hourly) _hourlyData = hourly;
+  if(!_hourlyData) return;
+  const canvas=document.getElementById('hourlyChart');
+  if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  // Robust width: fall back through parent chain, then a sane default
+  let W = canvas.parentElement.clientWidth || canvas.clientWidth || 0;
+  if(W < 50){ W = 520; }          // not laid out yet — use a default and redraw later
+  const H=200;
+  canvas.width=Math.round(W*dpr); canvas.height=Math.round(H*dpr);
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  const pts = _hourlyData.filter(h=>h.mean_mmol!=null);
+  if(!pts.length) return;
+
+  const pad={l:40,r:16,t:14,b:28}, cw=W-pad.l-pad.r, ch=H-pad.t-pad.b;
+  // Dynamic y-range from data (with sensible floor/ceiling), so the line uses the space
+  let lo=Math.min(...pts.map(h=>h.min_mmol!=null?h.min_mmol:h.mean_mmol));
+  let hi=Math.max(...pts.map(h=>h.max_mmol!=null?h.max_mmol:h.mean_mmol));
+  lo=Math.min(lo,3.5); hi=Math.max(hi,11);
+  lo=Math.floor(lo); hi=Math.ceil(hi);
+  const minY=lo, maxY=hi, spanY=(maxY-minY)||1;
+  const fy=v=>pad.t+ch-(v-minY)/spanY*ch;
+  const fx=i=>pad.l+(i/23)*cw;
+
+  // zones (clamped to plot area)
+  function band(a,b,color){ const y1=fy(Math.min(b,maxY)),y2=fy(Math.max(a,minY)); ctx.fillStyle=color; ctx.fillRect(pad.l,y1,cw,y2-y1); }
+  band(minY,3.9,'rgba(239,68,68,0.07)');
+  band(3.9,10,'rgba(34,197,94,0.05)');
+  band(10,maxY,'rgba(234,179,8,0.05)');
+
+  // min–max range band (shaded area)
+  if(pts[0].min_mmol!=null){
+    ctx.fillStyle='rgba(126,232,162,0.10)';
+    ctx.beginPath();
+    pts.forEach((h,i)=>{ const x=fx(h.hour),y=fy(Math.min(h.max_mmol,maxY)); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+    for(let i=pts.length-1;i>=0;i--){ const h=pts[i]; ctx.lineTo(fx(h.hour),fy(Math.max(h.min_mmol,minY))); }
+    ctx.closePath(); ctx.fill();
+  }
+
+  // gridlines + y labels
+  ctx.font='11px Inter'; ctx.fillStyle='#7c8aa3'; ctx.textBaseline='middle';
+  const step = spanY>10?4:2;
+  for(let v=minY; v<=maxY; v+=step){
+    const y=fy(v);
+    ctx.strokeStyle='rgba(30,36,51,0.6)'; ctx.lineWidth=0.5; ctx.setLineDash([2,4]);
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(pad.l+cw,y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillText(v, 8, y);
+  }
+
+  // target threshold lines
+  ctx.setLineDash([4,4]); ctx.lineWidth=1;
+  [[3.9,'rgba(249,115,22,0.5)'],[10,'rgba(234,179,8,0.4)']].forEach(([v,c])=>{
+    if(v>=minY&&v<=maxY){ ctx.strokeStyle=c; ctx.beginPath(); ctx.moveTo(pad.l,fy(v)); ctx.lineTo(pad.l+cw,fy(v)); ctx.stroke(); }
+  });
+  ctx.setLineDash([]);
+
+  // mean line
+  ctx.lineWidth=2.5; ctx.strokeStyle='#7ee8a2'; ctx.lineJoin='round'; ctx.beginPath();
+  pts.forEach((h,i)=>{ const x=fx(h.hour),y=fy(h.mean_mmol); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.stroke();
+  // dots
+  pts.forEach(h=>{ ctx.beginPath(); ctx.arc(fx(h.hour),fy(h.mean_mmol),3,0,Math.PI*2); ctx.fillStyle=h.mean_mmol<3.9?'#ef4444':h.mean_mmol>10?'#eab308':'#7ee8a2'; ctx.fill(); });
+
+  // x labels
+  ctx.fillStyle='#7c8aa3'; ctx.textBaseline='alphabetic'; ctx.textAlign='center';
+  [0,3,6,9,12,15,18,21].forEach(h=>ctx.fillText(h+':00', fx(h), H-8));
+  ctx.textAlign='left';
+}
+// Redraw when layout settles and on resize (fixes the flat-line-before-layout bug)
+window.addEventListener('resize', ()=>{ if(_hourlyData) drawHourly(); });
+
+function setv(id,v){ if(v!=null) document.getElementById(id).value=v; }
+function numv(id){ const v=document.getElementById(id).value; return v===''?null:parseFloat(v); }
+
+function printReport(){
+  // The browser print dialog handles both print and "Save as PDF".
+  window.print();
+}
+
+function renderBolus(b){
+  const el = document.getElementById('bolusSummary');
+  if(!b || b.error || !b.summary){ el.innerHTML = '<div class="muted">No treatment data available.</div>'; return; }
+  const s = b.summary;
+  const stat = (label,val,sub)=>`<div class="bstat"><div class="bstat-val">${val}</div><div class="bstat-label">${label}</div>${sub?`<div class="bstat-sub">${sub}</div>`:''}</div>`;
+  let html = `<div class="bstat-row">
+    ${stat('Manual boluses', s.manual_bolus_count, s.manual_bolus_u+' U total')}
+    ${stat('SMBs (auto)', s.smb_count, s.smb_u+' U total')}
+    ${stat('Manual share', s.manual_share_pct+'%', 'of bolus insulin')}
+    ${stat('Lows ≤3h after manual', s.lows_after_manual, 'co-occurrence')}
+    ${stat('Meals high at 4h', s.uncorrected_meals, 'logged meals')}
+  </div>`;
+  if(b.findings && b.findings.length){
+    html += b.findings.map(f=>{
+      const cls = f.level==='warn'?'annotation-warn':'annotation-info';
+      return `<div class="annotation ${cls}" style="margin-top:10px"><div><b>${esc(f.title)}</b><br>${esc(f.text)}</div></div>`;
+    }).join('');
+  }
+  if(b.uncorrected_meal_examples && b.uncorrected_meal_examples.length){
+    html += `<div style="margin-top:14px"><div class="muted" style="font-size:13px;margin-bottom:8px">Examples of meals that stayed high (peak → 4h later):</div>`;
+    html += b.uncorrected_meal_examples.map(m=>`<div class="meal-ex"><span>${m.carbs||'?'}g carbs</span><span class="muted">start ${m.start_mmol??'?'}</span><span style="color:var(--warn)">peak ${m.peak_mmol}</span><span style="color:var(--danger)">4h: ${m.end_mmol}</span></div>`).join('');
+    html += `</div>`;
+  }
+  el.innerHTML = html;
+}
+
+let _feedbackOptionsLoaded=false;
+async function loadFeedbackOptions(){
+  if(_feedbackOptionsLoaded) return;
+  try{
+    const opts = await (await fetch('/api/feedback_options')).json();
+    document.getElementById('feedbackOptions').innerHTML = opts.map(o=>
+      `<label class="fb-opt"><input type="checkbox" value="${o.id}"> ${esc(o.label)}</label>`).join('');
+    _feedbackOptionsLoaded=true;
+  }catch(e){}
+}
+function clearFeedback(){
+  document.querySelectorAll('#feedbackOptions input:checked').forEach(c=>c.checked=false);
+  document.getElementById('feedbackResults').innerHTML='';
+}
+async function runFeedback(){
+  const ids=[...document.querySelectorAll('#feedbackOptions input:checked')].map(c=>c.value);
+  const box=document.getElementById('feedbackResults');
+  if(!ids.length){ box.innerHTML='<div class="muted">Select at least one item above.</div>'; return; }
+  box.innerHTML='<div class="muted">Checking against your data…</div>';
+  try{
+    const r=await fetch(`/api/users/${UID}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback:ids})});
+    const d=await r.json();
+    if(!r.ok){ box.innerHTML=`<div class="annotation annotation-warn">${esc(d.message||d.error)}</div>`; return; }
+    if(!d.suggestions.length){ box.innerHTML='<div class="muted">No suggestions generated.</div>'; return; }
+    box.innerHTML = d.suggestions.map(sg=>{
+      const agree = sg.data_supports;
+      const badge = agree
+        ? '<span class="fb-badge agree">✓ Your data supports this</span>'
+        : '<span class="fb-badge disagree">✗ Your data does NOT clearly back this</span>';
+      const ev = (sg.evidence||[]).map(e=>`<div class="fb-ev"><span class="${e.supports?'ev-yes':'ev-no'}">${e.supports?'✓':'·'}</span> ${esc(e.label)}: <b>${esc(e.value)}</b></div>`).join('');
+      return `<div class="fb-card ${agree?'':'fb-card-weak'}">
+        <div class="fb-head"><span class="fb-feedback">"${esc(sg.feedback)}"</span>${badge}</div>
+        <div class="fb-setting"><span class="muted">Consider:</span> <b>${esc(sg.setting)}</b></div>
+        <div class="fb-suggest">${esc(sg.suggested)}</div>
+        <div class="fb-logic"><b>Why:</b> ${esc(sg.logic)}</div>
+        <div class="fb-evidence"><div class="muted" style="font-size:12px;margin-bottom:4px">Evidence from your Nightscout data:</div>${ev}</div>
+      </div>`;
+    }).join('') + '<div class="annotation annotation-warn" style="margin-top:12px">These are candidates to discuss with your care team, generated from your data — not instructions. Where your data doesn\'t back a feeling, that gap is itself worth discussing.</div>';
+  }catch(e){ box.innerHTML=`<div class="annotation annotation-warn">Error: ${esc(e.message)}</div>`; }
+}
+function esc(s){return (''+(s==null?'':s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+loadSettings();
+</script>
+</body>
+</html>
