@@ -70,31 +70,89 @@ def _decrypt_aaps(content_b64, salt_hex, password, content_hash=None):
     return text
 
 
-# Each internal setting -> list of substring patterns to look for in pref keys.
-# First key whose name contains ALL of a pattern group's tokens wins.
-SETTING_PATTERNS = {
-    "lgs_threshold":        [["lgs"], ["hypo", "threshold"], ["safety", "threshold"]],
-    "max_iob":              [["maxiob"], ["max", "iob"]],
-    "max_basal":            [["maxbasal"], ["max", "basal"]],
-    "dynisf_factor":        [["dynisf", "adjust"], ["dynisfadjust"], ["dynamic", "isf"]],
-    "tdd7":                 [["tdd7"], ["tdd", "7"]],
-    "smb_interval":         [["smb", "interval"]],
-    "sensitivity_raises_target": [["sensitivity", "raises"], ["sens", "target"]],
-    "resistance_lowers_target":  [["resistance", "lowers"], ["resist", "target"]],
-    "pkpd_initial_dia":     [["pkpd", "dia"], ["initial", "dia"], ["dia", "h"]],
-    "pkpd_initial_peak":    [["pkpd", "peak"], ["initial", "peak"]],
-    "isf_fusion_min":       [["fusion", "min"], ["isf", "min", "factor"]],
-    "isf_fusion_max":       [["fusion", "max"], ["isf", "max", "factor"]],
-    "smb_tail_damping":     [["tail", "damping"], ["smb", "tail"]],
-    "learning_pace":        [["learning", "pace"], ["pkpd", "learning"]],
-    "insulin_type":         [["pkpd", "insulin", "preset"], ["insulin", "preset"]],
-    "tap_g_blend":          [["tapg"], ["tap", "blend"], ["learned", "peak", "blend"]],
+# Each internal setting maps to:
+#   "keys": exact preference key names to try first, in priority order
+#           (these are the real AIMI/AAPS keys; matching is case-insensitive but EXACT)
+#   "contains": fallback loose substrings (only used if no exact key matched)
+#   "min"/"max": sanity bounds — a matched value outside this range is REJECTED
+#               (this is what stops timestamps/percentages being read as settings)
+SETTING_MAP = {
+    "lgs_threshold": {
+        "keys": ["OApsAIMILgsThreshold", "lgsThreshold", "hypoGuard"],
+        "contains": [["lgs", "threshold"]],
+        "min": 3.0, "max": 8.0,      # mmol/L; rejects 99 (a percentage)
+    },
+    "max_iob": {
+        "keys": ["ApsSmbMaxIob", "OApsAIMIMaxIOB", "max_iob_u", "MAX_IOB"],
+        "contains": [["max", "iob"]],
+        "min": 0.0, "max": 40.0,      # Units; rejects millisecond timestamps
+    },
+    "max_basal": {
+        "keys": ["ApsMaxBasal", "OApsAIMIMaxBasal"],
+        "contains": [["max", "basal"]],
+        "min": 0.0, "max": 35.0,
+    },
+    "dynisf_factor": {
+        "keys": ["OApsAIMIDynISFAdjust", "DynISF_Adjust", "OApsAIMIDynISFAdjusthyper"],
+        "contains": [["dynisf", "adjust"]],
+        "min": 50.0, "max": 250.0,    # percent
+    },
+    "tdd7": {
+        "keys": ["OApsAIMITDD7", "key_tdd7", "tdd7"],
+        "contains": [["tdd7"]],
+        "min": 5.0, "max": 200.0,     # Units/day
+    },
+    "smb_interval": {
+        "keys": ["OApsAIMISMBInterval", "ApsSmbInterval"],
+        "contains": [["smb", "interval"]],
+        "min": 1.0, "max": 30.0,      # minutes
+    },
+    "pkpd_initial_dia": {
+        "keys": ["OApsAIMIPkpdStateDiaH", "OApsAIMIPkpdInitialDiaH"],
+        "contains": [["pkpd", "dia"]],
+        "min": 3.0, "max": 12.0,      # hours
+    },
+    "pkpd_initial_peak": {
+        "keys": ["OApsAIMIPkpdStatePeakMin", "OApsAIMIPkpdInitialPeak"],
+        "contains": [["pkpd", "peak"]],
+        "min": 30.0, "max": 120.0,    # minutes
+    },
+    "isf_fusion_min": {
+        "keys": ["OApsAIMIIsfFusionMinFactor", "PkPd_Fusion_Min"],
+        "contains": [["fusion", "min"]],
+        "min": 0.3, "max": 1.5,
+    },
+    "isf_fusion_max": {
+        "keys": ["OApsAIMIIsfFusionMaxFactor", "PkPd_Fusion_Max"],
+        "contains": [["fusion", "max"]],
+        "min": 0.8, "max": 2.5,
+    },
+    "smb_tail_damping": {
+        "keys": ["OApsAIMISmbTailDamping", "OApsAIMIPkpdTailDamping"],
+        "contains": [["tail", "damping"]],
+        "min": 0.3, "max": 1.0,
+    },
+    "learning_pace": {
+        "keys": ["OApsAIMIPkpdLearningPace", "OApsAIMILearningPace"],
+        "contains": [["learning", "pace"]],
+    },
+    "insulin_type": {
+        "keys": ["OApsAIMIPkpdInsulinPreset", "OApsAIMIInsulinPreset"],
+        "contains": [["insulin", "preset"]],
+    },
+    "sensitivity_raises_target": {
+        "keys": ["OApsAIMISensitivityRaisesTarget"],
+        "contains": [["sensitivity", "raises"]],
+    },
+    "resistance_lowers_target": {
+        "keys": ["OApsAIMIResistanceLowersTarget"],
+        "contains": [["resistance", "lowers"]],
+    },
 }
 
-# Settings that should be coerced to a number / bool / choice
 NUMERIC = {"lgs_threshold", "max_iob", "max_basal", "dynisf_factor", "tdd7",
            "smb_interval", "pkpd_initial_dia", "pkpd_initial_peak",
-           "isf_fusion_min", "isf_fusion_max", "smb_tail_damping", "tap_g_blend"}
+           "isf_fusion_min", "isf_fusion_max", "smb_tail_damping"}
 BOOL = {"sensitivity_raises_target", "resistance_lowers_target"}
 
 
@@ -232,26 +290,65 @@ def parse_aaps_export(raw_text, password=None):
         return {"ok": False, "error": "no_keys",
                 "message": "No preference keys found in the file."}
 
+    # Build a case-insensitive lookup of the export's keys
+    lower_index = {}
+    for k in flat:
+        # last path segment (after any dotted nesting) is the real pref key
+        seg = k.split(".")[-1]
+        lower_index.setdefault(seg.lower(), k)
+        lower_index.setdefault(k.lower(), k)
+
+    def _in_bounds(setting, val):
+        spec = SETTING_MAP[setting]
+        if "min" in spec and isinstance(val, (int, float)):
+            if val < spec["min"] or val > spec["max"]:
+                return False
+        return True
+
     settings = {}
     matched = {}
+    rejected = {}
     used_keys = set()
-    for setting, groups in SETTING_PATTERNS.items():
-        for k, v in flat.items():
-            if k in used_keys:
-                continue
-            if _key_matches(k.lower(), groups):
-                val = _coerce(setting, v)
-                if val is not None:
-                    settings[setting] = val
-                    matched[setting] = {"key": k, "raw": v, "value": val}
-                    used_keys.add(k)
+
+    for setting, spec in SETTING_MAP.items():
+        found = None
+        # 1) exact key names, in priority order
+        for cand in spec.get("keys", []):
+            real = lower_index.get(cand.lower())
+            if real and real not in used_keys:
+                val = _coerce(setting, flat[real])
+                if val is not None and _in_bounds(setting, val):
+                    found = (real, flat[real], val)
                     break
+                elif val is not None:
+                    rejected[setting] = {"key": real, "raw": flat[real],
+                                         "reason": "out_of_range"}
+        # 2) loose fallback ONLY if no exact key matched — still bounded
+        if not found:
+            for tokens in spec.get("contains", []):
+                for k, v in flat.items():
+                    if k in used_keys:
+                        continue
+                    kl = k.split(".")[-1].lower()
+                    if all(t in kl for t in tokens):
+                        val = _coerce(setting, v)
+                        if val is not None and _in_bounds(setting, val):
+                            found = (k, v, val)
+                            break
+                if found:
+                    break
+        if found:
+            real, raw, val = found
+            settings[setting] = val
+            matched[setting] = {"key": real, "raw": raw, "value": val}
+            used_keys.add(real)
 
     units = detect_units(flat)
     return {
         "ok": True,
         "settings": settings,
         "matched": matched,
+        "rejected": rejected,
         "units": units,
         "matched_count": len(matched),
         "total_keys": len(flat),
