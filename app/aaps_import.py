@@ -78,75 +78,89 @@ def _decrypt_aaps(content_b64, salt_hex, password, content_hash=None):
 #               (this is what stops timestamps/percentages being read as settings)
 SETTING_MAP = {
     "lgs_threshold": {
-        "keys": ["OApsAIMILgsThreshold", "lgsThreshold", "hypoGuard"],
-        "contains": [["lgs", "threshold"]],
-        "min": 3.0, "max": 8.0,      # mmol/L; rejects 99 (a percentage)
+        # VERIFIED: core/keys UnitDoubleKey.ApsLgsThreshold key="lgsThreshold"
+        # Stored in mg/dL (max 100 mg/dL ≈ 5.6 mmol/L). NOT an OApsAIMI key.
+        "keys": ["lgsThreshold"],
+        "contains": [],   # no loose fallback — loose match grabbed hypoPct(99)
+        "min_mgdl": 60, "max_mgdl": 110,
+        "min": 3.0, "max": 8.0,   # mmol bound if value already in mmol
     },
     "max_iob": {
-        "keys": ["ApsSmbMaxIob", "OApsAIMIMaxIOB", "max_iob_u", "MAX_IOB"],
-        "contains": [["max", "iob"]],
-        "min": 0.0, "max": 40.0,      # Units; rejects millisecond timestamps
+        # VERIFIED: DoubleKey.ApsSmbMaxIob key="openapsmb_max_iob"
+        "keys": ["openapsmb_max_iob", "openapsma_max_iob"],
+        "contains": [],
+        "min": 0.0, "max": 40.0,
     },
     "max_basal": {
-        "keys": ["ApsMaxBasal", "OApsAIMIMaxBasal"],
-        "contains": [["max", "basal"]],
+        # VERIFIED: ApsMaxBasal key="openapsma_max_basal"
+        "keys": ["openapsma_max_basal"],
+        "contains": [],
         "min": 0.0, "max": 35.0,
     },
-    "dynisf_factor": {
-        "keys": ["OApsAIMIDynISFAdjust", "DynISF_Adjust", "OApsAIMIDynISFAdjusthyper"],
-        "contains": [["dynisf", "adjust"]],
-        "min": 50.0, "max": 250.0,    # percent
+    "smb_interval": {
+        # VERIFIED: ApsMaxSmbFrequency key="smbinterval"
+        "keys": ["smbinterval"],
+        "contains": [],
+        "min": 1.0, "max": 30.0,
     },
     "tdd7": {
-        "keys": ["OApsAIMITDD7", "key_tdd7", "tdd7"],
-        "contains": [["tdd7"]],
-        "min": 5.0, "max": 200.0,     # Units/day
-    },
-    "smb_interval": {
-        "keys": ["OApsAIMISMBInterval", "ApsSmbInterval"],
-        "contains": [["smb", "interval"]],
-        "min": 1.0, "max": 30.0,      # minutes
+        # VERIFIED: OApsAIMITDD7 key="key_tdd7"
+        "keys": ["key_tdd7"],
+        "contains": [],
+        "min": 5.0, "max": 200.0,
     },
     "pkpd_initial_dia": {
-        "keys": ["OApsAIMIPkpdStateDiaH", "OApsAIMIPkpdInitialDiaH"],
-        "contains": [["pkpd", "dia"]],
-        "min": 3.0, "max": 12.0,      # hours
+        # VERIFIED: user-set starting DIA = aimi_pkpd_initial_dia_h
+        # (state/learned current = aimi_pkpd_state_dia_h — we report the user setting)
+        "keys": ["aimi_pkpd_initial_dia_h", "aimi_pkpd_state_dia_h"],
+        "contains": [],
+        "min": 3.0, "max": 12.0,
     },
     "pkpd_initial_peak": {
-        "keys": ["OApsAIMIPkpdStatePeakMin", "OApsAIMIPkpdInitialPeak"],
-        "contains": [["pkpd", "peak"]],
-        "min": 30.0, "max": 120.0,    # minutes
+        # VERIFIED: aimi_pkpd_initial_peak_min
+        "keys": ["aimi_pkpd_initial_peak_min", "aimi_pkpd_state_peak_min"],
+        "contains": [],
+        "min": 30.0, "max": 120.0,
     },
     "isf_fusion_min": {
-        "keys": ["OApsAIMIIsfFusionMinFactor", "PkPd_Fusion_Min"],
-        "contains": [["fusion", "min"]],
+        # VERIFIED: aimi_isf_fusion_min_factor
+        "keys": ["aimi_isf_fusion_min_factor"],
+        "contains": [],
         "min": 0.3, "max": 1.5,
     },
     "isf_fusion_max": {
-        "keys": ["OApsAIMIIsfFusionMaxFactor", "PkPd_Fusion_Max"],
-        "contains": [["fusion", "max"]],
+        # VERIFIED: aimi_isf_fusion_max_factor
+        "keys": ["aimi_isf_fusion_max_factor"],
+        "contains": [],
         "min": 0.8, "max": 2.5,
     },
     "smb_tail_damping": {
-        "keys": ["OApsAIMISmbTailDamping", "OApsAIMIPkpdTailDamping"],
-        "contains": [["tail", "damping"]],
+        # VERIFIED: aimi_smb_tail_damping
+        "keys": ["aimi_smb_tail_damping"],
+        "contains": [],
         "min": 0.3, "max": 1.0,
     },
+    "dynisf_factor": {
+        # Not yet verified against core/keys — keep loose, bounded
+        "keys": ["aimi_dynisf_adjustment", "DynISF_Adjust"],
+        "contains": [["dynisf", "adjust"]],
+        "min": 50.0, "max": 250.0,
+    },
     "learning_pace": {
-        "keys": ["OApsAIMIPkpdLearningPace", "OApsAIMILearningPace"],
+        "keys": ["aimi_pkpd_learning_pace", "OApsAIMIPkpdLearningPace"],
         "contains": [["learning", "pace"]],
     },
     "insulin_type": {
-        "keys": ["OApsAIMIPkpdInsulinPreset", "OApsAIMIInsulinPreset"],
+        "keys": ["aimi_pkpd_insulin_preset", "OApsAIMIPkpdInsulinPreset"],
         "contains": [["insulin", "preset"]],
     },
     "sensitivity_raises_target": {
-        "keys": ["OApsAIMISensitivityRaisesTarget"],
-        "contains": [["sensitivity", "raises"]],
+        "keys": ["aimi_sensitivity_raises_target"],
+        "contains": [],
     },
     "resistance_lowers_target": {
-        "keys": ["OApsAIMIResistanceLowersTarget"],
-        "contains": [["resistance", "lowers"]],
+        "keys": ["aimi_resistance_lowers_target"],
+        "contains": [],
     },
 }
 
@@ -298,12 +312,29 @@ def parse_aaps_export(raw_text, password=None):
         lower_index.setdefault(seg.lower(), k)
         lower_index.setdefault(k.lower(), k)
 
+    units = detect_units(flat)  # 'mmol' or 'mgdl'
+
     def _in_bounds(setting, val):
         spec = SETTING_MAP[setting]
-        if "min" in spec and isinstance(val, (int, float)):
-            if val < spec["min"] or val > spec["max"]:
-                return False
+        if not isinstance(val, (int, float)):
+            return True
+        # LGS (and any mg/dL-stored glucose setting) may be stored in mg/dL.
+        # Accept if it fits EITHER the mg/dL band or the mmol band.
+        if "min_mgdl" in spec:
+            in_mgdl = spec["min_mgdl"] <= val <= spec["max_mgdl"]
+            in_mmol = spec.get("min", -1) <= val <= spec.get("max", 1e9)
+            return in_mgdl or in_mmol
+        if "min" in spec:
+            return spec["min"] <= val <= spec["max"]
         return True
+
+    def _convert(setting, val):
+        """LGS is stored in mg/dL. If user is mmol and value is clearly mg/dL, convert."""
+        spec = SETTING_MAP[setting]
+        if "min_mgdl" in spec and isinstance(val, (int, float)):
+            if units == "mmol" and val > 15:   # 15+ can only be mg/dL for a glucose target
+                return round(val / 18.0, 1)
+        return val
 
     settings = {}
     matched = {}
@@ -318,7 +349,7 @@ def parse_aaps_export(raw_text, password=None):
             if real and real not in used_keys:
                 val = _coerce(setting, flat[real])
                 if val is not None and _in_bounds(setting, val):
-                    found = (real, flat[real], val)
+                    found = (real, flat[real], _convert(setting, val))
                     break
                 elif val is not None:
                     rejected[setting] = {"key": real, "raw": flat[real],
@@ -333,7 +364,7 @@ def parse_aaps_export(raw_text, password=None):
                     if all(t in kl for t in tokens):
                         val = _coerce(setting, v)
                         if val is not None and _in_bounds(setting, val):
-                            found = (k, v, val)
+                            found = (k, v, _convert(setting, val))
                             break
                 if found:
                     break
@@ -342,8 +373,6 @@ def parse_aaps_export(raw_text, password=None):
             settings[setting] = val
             matched[setting] = {"key": real, "raw": raw, "value": val}
             used_keys.add(real)
-
-    units = detect_units(flat)
     return {
         "ok": True,
         "settings": settings,

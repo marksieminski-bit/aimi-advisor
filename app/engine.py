@@ -392,6 +392,22 @@ def _num(val):
     return float(m.group()) if m else None
 
 
+# "Where to find it" in AIMI for the settings shown as cards (Profile + Main AIMI).
+# Names match the slider card labels in build_slider_groups / slider_specs.
+SLIDER_LOCATIONS = {
+    "ISF (profile)": "AAPS main screen → Profile (or Local Profile) → ISF — this is your profile insulin sensitivity, not an AIMI-only setting.",
+    "Carb ratio": "AAPS main screen → Profile (or Local Profile) → IC / Carb ratio.",
+    "BG target": "AAPS main screen → Profile (or Local Profile) → Target BG.",
+    "LGS threshold": "Preferences → OpenAPS AIMI → Safety → Low Glucose Suspend threshold (stored in mg/dL; max 100 mg/dL ≈ 5.6 mmol/L).",
+    "Max IOB": "Preferences → OpenAPS AIMI → SMB / Safety → Max IOB.",
+    "Max basal": "Preferences → OpenAPS AIMI → Max basal (also bounded by your pump's max basal).",
+    "DynamicISF factor": "Preferences → OpenAPS AIMI → Dynamic ISF → adjustment factor.",
+    "TDD7": "Preferences → OpenAPS AIMI → TDD / learning → 7-day total daily dose.",
+    "SMB interval": "Preferences → OpenAPS AIMI → SMB → SMB interval (minutes).",
+    "Insulin preset": "Preferences → OpenAPS AIMI → PK/PD insulin model → Insulin preset.",
+}
+
+
 def build_slider_groups(analysis, profile, settings, pkpd, tdd):
     """
     Assemble a grouped list of every setting with current + recommended values
@@ -495,6 +511,7 @@ def build_slider_groups(analysis, profile, settings, pkpd, tdd):
             "recommended_num": rec_num,
             "reason": reason or r.get("short"),
             "info_short": r.get("short"), "info_long": r.get("long"),
+            "location": r.get("location") or SLIDER_LOCATIONS.get(name),
             "effect_up": r.get("effect_up"), "effect_down": r.get("effect_down"),
             "code": r.get("code"),
             "status": status,

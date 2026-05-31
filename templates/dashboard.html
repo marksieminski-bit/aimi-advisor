@@ -542,6 +542,7 @@ function showSliderInfo(key){
   h += `Recommended: <strong>${esc(it.recommended_num!=null?(it.recommended_num+unit):(it.recommended||'—'))}</strong></div>`;
   if(it.info_long) h += `<p>${esc(it.info_long)}</p>`;
   else if(it.reason) h += `<p>${esc(it.reason)}</p>`;
+  if(it.location) h += `<div class="info-location">📍 <b>Where to find it:</b> ${esc(it.location)}</div>`;
   if(it.effect_up||it.effect_down){
     h += `<div class="info-effects">`;
     if(it.effect_up) h += `<div class="info-eff"><span class="up">▲ Higher</span> ${esc(it.effect_up)}</div>`;
