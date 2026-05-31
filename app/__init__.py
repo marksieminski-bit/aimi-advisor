@@ -129,6 +129,14 @@ def api_analyze(uid):
     from .bolus_analysis import analyze_boluses
     bolus = analyze_boluses(entries, treatments, tz_offset_min=u["tz_offset_min"])
 
+    # Stability gate: infer setting changes from snapshot history, flag settling
+    # recommendations and over-tweaking. Soft gate — recs are annotated, not hidden.
+    from .stability import build_stability
+    history = store.get_settings_history(uid, limit=30)
+    stability = build_stability(history, result.get("recommendations", []))
+    # Replace recommendations with the annotated versions (carry the 'settling' flag)
+    result["recommendations"] = stability["recommendations"]
+
     store.save_report(uid, analysis, result)
     # Cache the latest analysis context so the feedback endpoint can reuse it
     _LATEST[uid] = {"analysis": analysis, "bolus": bolus, "profile": profile,
@@ -146,6 +154,12 @@ def api_analyze(uid):
         "tdd_estimate": tdd_est,
         "bolus": bolus,
         "result": result,
+        "stability": {
+            "settling": stability["settling"],
+            "change_log": stability["change_log"],
+            "overtweaking": stability["overtweaking"],
+            "has_history": stability["has_history"],
+        },
     })
 
 
@@ -192,6 +206,8 @@ def api_import_settings(uid):
     merged = dict(u["settings"] or {})
     merged.update(result["settings"])
     store.update_user(uid, settings=merged)
+    # Record a timestamped snapshot so the app can infer when settings change.
+    changed_keys = store.record_settings_snapshot(uid, merged, source="import")
     return jsonify({
         "ok": True,
         "matched_count": result["matched_count"],
@@ -199,6 +215,7 @@ def api_import_settings(uid):
         "matched": result["matched"],
         "units": result["units"],
         "settings": merged,
+        "changed_keys": changed_keys,
     })
 
 

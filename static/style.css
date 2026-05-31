@@ -291,3 +291,17 @@ canvas{width:100%!important}
 /* "Where to find it" location notes */
 .gloss-location{font-size:12px;color:var(--accent2);background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.18);border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.5}
 .info-location{font-size:13px;color:var(--accent2);background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.18);border-radius:8px;padding:10px 12px;margin:10px 0}
+
+/* Settling note on recommendations */
+.priority-item.is-settling{border-left:3px solid var(--warn)}
+.settling-note{font-size:12px;color:var(--warn);background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.5}
+
+/* Change log */
+.cl-entry{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+.cl-when{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
+.cl-change{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:14px}
+.cl-label{min-width:160px;font-weight:500}
+.cl-from{color:var(--muted);text-decoration:line-through}
+.cl-arrow{color:var(--muted)}
+.cl-to{color:var(--accent);font-weight:600}
+@media(max-width:768px){.cl-label{min-width:auto}}

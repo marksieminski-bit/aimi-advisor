@@ -59,6 +59,16 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS settings_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            created_at TEXT,
+            settings_json TEXT,
+            source TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
     con.commit()
     con.close()
 
@@ -154,3 +164,48 @@ def save_report(uid, analysis, recommendations):
     )
     con.commit()
     con.close()
+
+
+def record_settings_snapshot(uid, settings, source="import"):
+    """
+    Save a timestamped snapshot of settings, but only if it DIFFERS from the most
+    recent snapshot (so re-importing identical settings doesn't create noise).
+    Returns the list of changed setting keys vs the previous snapshot (or [] if first).
+    """
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    prev = con.execute(
+        "SELECT settings_json FROM settings_history WHERE user_id=? ORDER BY created_at DESC LIMIT 1",
+        (uid,),
+    ).fetchone()
+    prev_settings = json.loads(prev["settings_json"]) if prev else {}
+
+    changed = []
+    for k, v in (settings or {}).items():
+        if k in prev_settings and prev_settings[k] != v:
+            changed.append(k)
+    # also catch keys that existed before and are now different/removed handled above
+
+    # Only insert if it's the first snapshot or something actually changed
+    if not prev or changed:
+        con.execute(
+            "INSERT INTO settings_history (user_id, created_at, settings_json, source) VALUES (?,?,?,?)",
+            (uid, datetime.utcnow().isoformat(), json.dumps(settings or {}), source),
+        )
+        con.commit()
+    con.close()
+    return changed
+
+
+def get_settings_history(uid, limit=20):
+    """Most-recent-first list of {created_at, settings, source}."""
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT created_at, settings_json, source FROM settings_history "
+        "WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+        (uid, limit),
+    ).fetchall()
+    con.close()
+    return [{"created_at": r["created_at"], "settings": json.loads(r["settings_json"]),
+             "source": r["source"]} for r in rows]

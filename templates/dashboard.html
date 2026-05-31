@@ -86,6 +86,7 @@
   <div id="results" style="display:none">
     <!-- Immediate / critical recommendations banner -->
     <div id="immediateBanner"></div>
+    <div id="stabilityBanner"></div>
 
     <!-- Score -->
     <div class="section-title">
@@ -133,6 +134,12 @@
     <!-- Manual bolus / meal analysis -->
     <div class="section-title">Boluses &amp; Meals · What the data shows</div>
     <div id="bolusSummary" class="mb-32"></div>
+
+    <!-- Settings change history (inferred from imports) -->
+    <div id="changeLogSection" style="display:none">
+      <div class="section-title">Your setting changes <span class="muted" style="font-size:13px">· inferred from imports</span></div>
+      <div id="changeLog" class="mb-32"></div>
+    </div>
 
     <!-- Feedback-driven generator -->
     <div class="section-title">Tell the app what you're experiencing</div>
@@ -405,11 +412,13 @@ function render(d) {
       const cls = r.severity==='critical'?'p-critical':r.severity==='warn'?'p-warn':'p-ok';
       const icon = r.severity==='critical'?'🔴':r.severity==='warn'?'🟡':'🟢';
       const change = r.current ? `<span class="from">${esc(r.current)}</span><span class="to">→ ${esc(r.recommended||'')}</span>` : '';
-      return `<div class="priority-item">
+      const settlingBadge = r.settling ? `<div class="settling-note">⏳ <b>Still settling:</b> ${esc(r.settling.note)}</div>` : '';
+      return `<div class="priority-item${r.settling?' is-settling':''}">
         <div class="priority-num ${cls}">${i+1}</div>
         <div class="priority-content">
           <div class="priority-title">${icon} ${esc(r.title)}</div>
           <div class="priority-detail">${esc(r.detail)}</div>
+          ${settlingBadge}
           ${r.code_ref?`<div class="code-ref">📄 ${esc(r.code_ref)}</div>`:''}
         </div>
         <div class="priority-change">${change}</div>
@@ -422,6 +431,7 @@ function render(d) {
   renderSliders(res.slider_groups);
   renderChecklist(res);
   renderBolus(d.bolus);
+  renderStability(d.stability);
   loadFeedbackOptions();
   // redraw chart after layout settles (results div was just shown)
   requestAnimationFrame(()=>requestAnimationFrame(()=>drawHourly()));
@@ -714,6 +724,43 @@ function numv(id){ const v=document.getElementById(id).value; return v===''?null
 function printReport(){
   // The browser print dialog handles both print and "Save as PDF".
   window.print();
+}
+
+function renderStability(st){
+  const banner = document.getElementById('stabilityBanner');
+  const logSection = document.getElementById('changeLogSection');
+  const log = document.getElementById('changeLog');
+  if(!st){ banner.innerHTML=''; logSection.style.display='none'; return; }
+
+  // Over-tweaking warning at top
+  if(st.overtweaking){
+    banner.innerHTML = `<div class="immediate warn" style="margin-bottom:20px">
+      <div class="immediate-head"><span class="immediate-icon">⏳</span>
+      <span class="immediate-title">Give your changes time to settle</span></div>
+      <div class="immediate-foot" style="font-size:14px;color:#cbd5e1">${esc(st.overtweaking)}</div>
+    </div>`;
+  } else if(Object.keys(st.settling||{}).length){
+    const names = Object.values(st.settling).map(s=>`${esc(s.label)} (${s.days_left.toFixed(0)}d left)`).join(', ');
+    banner.innerHTML = `<div class="immediate ok" style="margin-bottom:20px">
+      <div class="immediate-head"><span class="immediate-icon">⏳</span>
+      <span class="immediate-title">Settings settling</span></div>
+      <div class="immediate-foot" style="font-size:14px;color:#cbd5e1">Recently changed, still adapting: ${names}. Recommendations for these are marked below — best to let them settle (~7 days) before changing again.</div>
+    </div>`;
+  } else {
+    banner.innerHTML = '';
+  }
+
+  // Change log
+  if(st.change_log && st.change_log.length){
+    logSection.style.display='block';
+    log.innerHTML = st.change_log.map(e=>{
+      const when = e.days_ago<1 ? 'today' : `${e.days_ago.toFixed(0)} day(s) ago`;
+      const rows = e.changes.map(c=>`<div class="cl-change"><span class="cl-label">${esc(c.label)}</span><span class="cl-from">${esc(''+c.from)}</span><span class="cl-arrow">→</span><span class="cl-to">${esc(''+c.to)}</span></div>`).join('');
+      return `<div class="cl-entry"><div class="cl-when">${when}</div>${rows}</div>`;
+    }).join('');
+  } else {
+    logSection.style.display='none';
+  }
 }
 
 function renderBolus(b){
