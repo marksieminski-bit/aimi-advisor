@@ -48,10 +48,15 @@
         <div class="hint">At least 8 characters.</div>
         <label>Confirm password</label>
         <input name="confirm" type="password" autocomplete="new-password" required>
+        {% if needs_invite %}
+        <label>Invite code</label>
+        <input name="invite" autocomplete="off" required>
+        <div class="hint">Ask whoever runs this instance for the invite code.</div>
+        {% endif %}
         <button type="submit">Create account</button>
       </form>
       {% if not first_run %}
-      <div class="foot"><a href="{{ url_for('index') }}">Back</a></div>
+      <div class="foot"><a href="{{ url_for('login_page') }}">Already have an account? Sign in</a></div>
       {% endif %}
     {% else %}
       <h1>Sign in</h1>
@@ -64,6 +69,9 @@
         <input name="password" type="password" autocomplete="current-password" required>
         <button type="submit">Sign in</button>
       </form>
+      {% if self_reg %}
+      <div class="foot"><a href="{{ url_for('register_page') }}">Need an account? Sign up</a></div>
+      {% endif %}
     {% endif %}
   </div>
 </body>

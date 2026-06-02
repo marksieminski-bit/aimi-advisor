@@ -20,6 +20,8 @@ services:
     environment:
       - AIMI_SECRET=CHANGE_ME_to_a_long_random_string
       - AIMI_HTTPS=1            # served over HTTPS via the tunnel -> secure cookies
+      - AIMI_INVITE_CODE=pick-a-code-and-share-it   # people self-register with this code.
+                                                    # Remove this line to make signups admin-only.
     volumes:
       - aimi-data:/data
     networks:

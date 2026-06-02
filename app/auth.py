@@ -9,6 +9,7 @@ This is app-level auth. For an internet-facing app holding glucose data and AAPS
 master passwords, running Cloudflare Access in front of this as well is strongly
 recommended — that blocks unauthenticated traffic before it ever reaches here.
 """
+import os
 import sqlite3
 import time
 from datetime import datetime
@@ -18,6 +19,25 @@ from flask import session, redirect, url_for, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from .store import DB_PATH
+
+
+# Self-registration is gated by an invite code, set via env. If unset, the app
+# falls back to admin-only account creation (safe default — no open door).
+def invite_code():
+    return os.environ.get("AIMI_INVITE_CODE", "").strip()
+
+
+def self_registration_enabled():
+    return bool(invite_code())
+
+
+def check_invite(code):
+    expected = invite_code()
+    if not expected:
+        return False
+    # constant-time compare to avoid leaking the code via timing
+    import hmac
+    return hmac.compare_digest((code or "").strip(), expected)
 
 
 def init_auth_db():

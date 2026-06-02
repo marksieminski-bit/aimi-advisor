@@ -60,38 +60,62 @@ def login_page():
             return redirect(nxt)
         auth.record_fail()
         return render_template("login.html", error="Incorrect username or password.",
-                               mode="login"), 401
-    return render_template("login.html", mode="login")
+                               mode="login", self_reg=auth.self_registration_enabled()), 401
+    return render_template("login.html", mode="login",
+                           self_reg=auth.self_registration_enabled())
 
 
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
     first_run = auth.account_count() == 0
-    # After first run, only admins can create new accounts.
-    if not first_run:
-        acct = current_account()
-        if not acct or not acct.get("is_admin"):
-            return redirect(url_for("login_page"))
+    acct = current_account()
+    is_admin = bool(acct and acct.get("is_admin"))
+    self_reg = auth.self_registration_enabled()
+
+    # Who's allowed to see/use this page?
+    #   - first run (creating the admin), OR
+    #   - an admin adding an account, OR
+    #   - self-registration is enabled (invite code set)
+    if not first_run and not is_admin and not self_reg:
+        return redirect(url_for("login_page"))
 
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         confirm = request.form.get("confirm", "")
+        invite = request.form.get("invite", "")
+
+        # If this is a self-registration (not first run, not an admin creating it),
+        # require a valid invite code.
+        needs_invite = (not first_run) and (not is_admin)
+        if needs_invite and not auth.check_invite(invite):
+            return render_template("login.html", error="Invalid or missing invite code.",
+                                   mode="register", first_run=first_run,
+                                   self_reg=self_reg, needs_invite=True), 403
+
         if password != confirm:
             return render_template("login.html", error="Passwords don't match.",
-                                   mode="register", first_run=first_run), 400
+                                   mode="register", first_run=first_run,
+                                   self_reg=self_reg, needs_invite=needs_invite), 400
         # The very first account is the admin.
         aid, err = auth.create_account(username, password, is_admin=first_run)
         if err:
             return render_template("login.html", error=err,
-                                   mode="register", first_run=first_run), 400
+                                   mode="register", first_run=first_run,
+                                   self_reg=self_reg, needs_invite=needs_invite), 400
         if first_run:
             auth.login_session({"id": aid, "username": username.strip().lower(),
                                 "is_admin": True})
             return redirect(url_for("index"))
-        # Admin created an account for someone else
+        # Self-registered users get logged straight in; admin-created ones don't.
+        if needs_invite:
+            auth.login_session({"id": aid, "username": username.strip().lower(),
+                                "is_admin": False})
         return redirect(url_for("index"))
-    return render_template("login.html", mode="register", first_run=first_run)
+
+    needs_invite = (not first_run) and (not is_admin)
+    return render_template("login.html", mode="register", first_run=first_run,
+                           self_reg=self_reg, needs_invite=needs_invite)
 
 
 @app.route("/logout")
