@@ -117,25 +117,49 @@ def analyze_entries(entries: list[dict], tz_offset_min: int = 0) -> dict:
 
 
 def extract_profile(ns_profile: dict | None) -> dict:
-    """Pull basal/ISF/CR/target from a Nightscout profile document."""
+    """Pull basal/ISF/CR/target from a Nightscout profile document.
+
+    Important details that were getting users wrong values:
+      - ISF and targets are GLUCOSE values: stored in the profile's units. If the
+        profile is mg/dL we convert ISF/targets to mmol for consistency. Carb ratio
+        (g/U) is NOT a glucose value and is never converted.
+      - ISF/CR can vary by time of day. We report the most-common (modal) value and
+        also expose the full schedule + range so a single number isn't misleading.
+      - We only use the *active* (default) profile; we do not silently grab a random
+        stored profile, which could be stale.
+    """
     out = {"basal_tdd": None, "isf": None, "cr": None, "target_low": None,
-            "target_high": None, "units": "mmol", "dia": None}
+           "target_high": None, "units": "mmol", "dia": None,
+           "isf_schedule": None, "cr_schedule": None,
+           "isf_varies": False, "cr_varies": False, "profile_name": None}
     if not ns_profile:
         return out
     store = ns_profile.get("store", {})
     default_name = ns_profile.get("defaultProfile")
     prof = store.get(default_name) if default_name else None
-    if not prof and store:
-        prof = next(iter(store.values()))
     if not prof:
-        return out
+        # Do NOT silently pick an arbitrary profile — that risks stale ISF/CR.
+        # Only fall back if there's exactly one profile (unambiguous).
+        if len(store) == 1:
+            default_name, prof = next(iter(store.items()))
+        else:
+            return out
+    out["profile_name"] = default_name
 
-    out["units"] = prof.get("units", "mmol")
+    units_raw = (prof.get("units") or "mmol").lower()
+    is_mgdl = "mg" in units_raw
+    out["units"] = "mgdl" if is_mgdl else "mmol"
+
+    def to_mmol(v):
+        """Convert a glucose value to mmol if the profile is mg/dL."""
+        if v is None:
+            return None
+        return round(v / 18.0, 2) if is_mgdl else v
+
     out["dia"] = prof.get("dia")
 
     basals = prof.get("basal", [])
     if basals:
-        # TDD = sum over the day
         tdd = 0.0
         for i, b in enumerate(basals):
             start = b.get("timeAsSeconds", 0)
@@ -144,16 +168,47 @@ def extract_profile(ns_profile: dict | None) -> dict:
             tdd += b.get("value", 0) * hours
         out["basal_tdd"] = round(tdd, 2)
 
-    def first_val(key):
-        arr = prof.get(key, [])
-        return arr[0].get("value") if arr else None
+    def schedule(key):
+        """Return list of {time, value} for a time-blocked profile field."""
+        arr = prof.get(key, []) or []
+        sched = []
+        for e in arr:
+            v = e.get("value")
+            if v is not None:
+                sched.append({"time": e.get("time", "00:00"), "value": v})
+        return sched
 
-    out["isf"] = first_val("sens")
-    out["cr"] = first_val("carbratio")
+    def modal_value(sched):
+        """Most-common value across the schedule (the value in effect most blocks).
+        Falls back to first block if all distinct."""
+        if not sched:
+            return None
+        from collections import Counter
+        counts = Counter(e["value"] for e in sched)
+        return counts.most_common(1)[0][0]
+
+    # ISF (glucose units → convert)
+    isf_sched = schedule("sens")
+    if isf_sched:
+        vals = [e["value"] for e in isf_sched]
+        out["isf"] = to_mmol(modal_value(isf_sched))
+        out["isf_varies"] = len(set(vals)) > 1
+        out["isf_schedule"] = [{"time": e["time"], "value": to_mmol(e["value"])}
+                               for e in isf_sched]
+
+    # Carb ratio (g/U — NOT a glucose value, never converted)
+    cr_sched = schedule("carbratio")
+    if cr_sched:
+        vals = [e["value"] for e in cr_sched]
+        out["cr"] = modal_value(cr_sched)
+        out["cr_varies"] = len(set(vals)) > 1
+        out["cr_schedule"] = cr_sched
+
+    # Targets (glucose units → convert)
     tgt_low = prof.get("target_low", [])
     tgt_high = prof.get("target_high", [])
-    out["target_low"] = tgt_low[0].get("value") if tgt_low else None
-    out["target_high"] = tgt_high[0].get("value") if tgt_high else None
+    out["target_low"] = to_mmol(tgt_low[0].get("value")) if tgt_low else None
+    out["target_high"] = to_mmol(tgt_high[0].get("value")) if tgt_high else None
     return out
 
 

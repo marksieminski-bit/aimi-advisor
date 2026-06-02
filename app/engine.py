@@ -429,11 +429,19 @@ def build_slider_groups(analysis, profile, settings, pkpd, tdd):
 
     # Profile recommendations (light touch — recommend keeping unless clearly off)
     if profile.get("isf"):
-        rec["ISF (profile)"] = (profile["isf"], "Profile fallback ISF — AIMI blends around this.")
+        isf_note = "Profile fallback ISF — AIMI blends around this."
+        if profile.get("isf_varies"):
+            isf_note += (" Note: your ISF changes by time of day; this shows the value "
+                         "in effect for most of the day, not a single all-day figure.")
+        rec["ISF (profile)"] = (profile["isf"], isf_note)
     if profile.get("cr"):
         cr = profile["cr"]
         cr_target = cr if cr >= 6 else 6.0
-        rec["Carb ratio"] = (cr_target, "Very low CR over-boluses meals; 6–10 g/U is typical for adults.")
+        cr_note = "Very low CR over-boluses meals; 6–10 g/U is typical for adults."
+        if profile.get("cr_varies"):
+            cr_note += (" Note: your carb ratio changes by time of day; this shows the "
+                        "most-common block.")
+        rec["Carb ratio"] = (cr_target, cr_note)
     if profile.get("target_low"):
         rec["BG target"] = (profile["target_low"], "Keep target as set unless lows/highs cluster.")
 

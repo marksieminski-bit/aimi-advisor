@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if mode == 'register' %}Create account{% else %}Sign in{% endif %} · AIMI Advisor</title>
+<style>
+  :root{--bg:#0b0f17;--surface:#141b2b;--border:#243049;--accent:#7ee8a2;--accent2:#38bdf8;--text:#e2e8f0;--muted:#7c8aa3;--err:#f87171}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);
+       display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:18px;
+        padding:36px 32px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 24px;line-height:1.5}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--border);
+        background:#0e1422;color:var(--text);font-size:15px}
+  input:focus{outline:none;border-color:var(--accent2)}
+  button{width:100%;margin-top:22px;padding:13px;border:none;border-radius:10px;
+         background:linear-gradient(90deg,var(--accent),var(--accent2));color:#06210f;
+         font-weight:700;font-size:15px;cursor:pointer}
+  .err{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--err);
+       padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:18px}
+  .foot{margin-top:18px;text-align:center;font-size:13px;color:var(--muted)}
+  .foot a{color:var(--accent2);text-decoration:none}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+  <div class="card">
+    {% if mode == 'register' %}
+      <h1>{% if first_run %}Welcome — create the admin account{% else %}Create an account{% endif %}</h1>
+      <p class="sub">
+        {% if first_run %}
+          This is the first account, so it will be the administrator. Choose a strong password —
+          this app holds glucose data and your AAPS master password.
+        {% else %}
+          Create a new account. Each account only sees its own profiles.
+        {% endif %}
+      </p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <form method="post">
+        <label>Username</label>
+        <input name="username" autocomplete="username" autofocus required>
+        <label>Password</label>
+        <input name="password" type="password" autocomplete="new-password" required>
+        <div class="hint">At least 8 characters.</div>
+        <label>Confirm password</label>
+        <input name="confirm" type="password" autocomplete="new-password" required>
+        <button type="submit">Create account</button>
+      </form>
+      {% if not first_run %}
+      <div class="foot"><a href="{{ url_for('index') }}">Back</a></div>
+      {% endif %}
+    {% else %}
+      <h1>Sign in</h1>
+      <p class="sub">Access your AIMI advisor profiles.</p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <form method="post">
+        <label>Username</label>
+        <input name="username" autocomplete="username" autofocus required>
+        <label>Password</label>
+        <input name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+      </form>
+    {% endif %}
+  </div>
+</body>
+</html>

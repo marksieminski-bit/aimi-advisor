@@ -1,33 +1,139 @@
-"""AIMI Settings Advisor — Flask app. Self-hostable, multi-user."""
+"""AIMI Settings Advisor — Flask app. Self-hostable, multi-user with login."""
 import os
+from datetime import timedelta
 
-from flask import Flask, jsonify, render_template, request, abort
+from flask import (Flask, jsonify, render_template, request, abort,
+                   session, redirect, url_for)
 
 from . import store
+from . import auth
+from .auth import (login_required, profile_guard, current_account)
 from .nightscout import NightscoutClient
 from .analytics import analyze_entries, extract_profile, actual_tdd
 from . import engine
 from .pkpd_reference import get_reference
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
+
+# Session secret: read from env (persist across restarts), else generate one.
+# In production set AIMI_SECRET so sessions survive restarts.
+app.secret_key = os.environ.get("AIMI_SECRET") or os.urandom(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Secure cookie when served over HTTPS (it is, via the Cloudflare tunnel).
+    SESSION_COOKIE_SECURE=os.environ.get("AIMI_HTTPS", "1") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+)
+
 store.init_db()
+auth.init_auth_db()
 
 MIN_DAYS = 15
 MAX_DAYS = 90
 
 
+# ---------------------------------------------------------------------------
+# AUTH ROUTES
+# ---------------------------------------------------------------------------
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    # First-run: if no accounts exist, send to registration to create the first.
+    if auth.account_count() == 0:
+        return redirect(url_for("register_page"))
+
+    if request.method == "POST":
+        if auth.is_locked_out():
+            return render_template("login.html",
+                                   error="Too many attempts. Try again in a few minutes.",
+                                   mode="login"), 429
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        acct = auth.verify_login(username, password)
+        if acct:
+            auth.clear_fails()
+            auth.login_session(acct)
+            nxt = request.args.get("next") or url_for("index")
+            # Only allow local redirects
+            if not nxt.startswith("/"):
+                nxt = url_for("index")
+            return redirect(nxt)
+        auth.record_fail()
+        return render_template("login.html", error="Incorrect username or password.",
+                               mode="login"), 401
+    return render_template("login.html", mode="login")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    first_run = auth.account_count() == 0
+    # After first run, only admins can create new accounts.
+    if not first_run:
+        acct = current_account()
+        if not acct or not acct.get("is_admin"):
+            return redirect(url_for("login_page"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        if password != confirm:
+            return render_template("login.html", error="Passwords don't match.",
+                                   mode="register", first_run=first_run), 400
+        # The very first account is the admin.
+        aid, err = auth.create_account(username, password, is_admin=first_run)
+        if err:
+            return render_template("login.html", error=err,
+                                   mode="register", first_run=first_run), 400
+        if first_run:
+            auth.login_session({"id": aid, "username": username.strip().lower(),
+                                "is_admin": True})
+            return redirect(url_for("index"))
+        # Admin created an account for someone else
+        return redirect(url_for("index"))
+    return render_template("login.html", mode="register", first_run=first_run)
+
+
+@app.route("/logout")
+def logout():
+    auth.logout_session()
+    return redirect(url_for("login_page"))
+
+
+@app.route("/account/password", methods=["POST"])
+@login_required
+def change_password():
+    acct = current_account()
+    ok, err = auth.change_password(
+        acct["id"], request.form.get("old_password", ""),
+        request.form.get("new_password", ""))
+    if ok:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": err}), 400
+
+
 @app.route("/")
+@login_required
 def index():
-    return render_template("index.html", users=store.list_users())
+    acct = current_account()
+    return render_template("index.html",
+                           users=store.list_users(owner_account_id=acct["id"],
+                                                   is_admin=acct["is_admin"]),
+                           account=acct)
 
 
 @app.route("/api/users", methods=["GET"])
+@login_required
 def api_list_users():
-    return jsonify(store.list_users())
+    acct = current_account()
+    return jsonify(store.list_users(owner_account_id=acct["id"],
+                                    is_admin=acct["is_admin"]))
 
 
 @app.route("/api/users", methods=["POST"])
+@login_required
 def api_create_user():
+    acct = current_account()
     d = request.get_json(force=True)
     if not d.get("name") or not d.get("ns_url"):
         return jsonify({"error": "name and ns_url required"}), 400
@@ -36,11 +142,13 @@ def api_create_user():
         ns_token=d.get("ns_token"), ns_secret=d.get("ns_secret"),
         tz_offset_min=int(d.get("tz_offset_min", 0)),
         settings=d.get("settings", {}),
+        owner_account_id=acct["id"],
     )
     return jsonify({"id": uid})
 
 
 @app.route("/api/users/<int:uid>", methods=["GET"])
+@profile_guard
 def api_get_user(uid):
     u = store.get_user(uid)
     if not u:
@@ -53,6 +161,7 @@ def api_get_user(uid):
 
 
 @app.route("/api/users/<int:uid>", methods=["PUT"])
+@profile_guard
 def api_update_user(uid):
     if not store.get_user(uid):
         abort(404)
@@ -66,12 +175,14 @@ def api_update_user(uid):
 
 
 @app.route("/api/users/<int:uid>", methods=["DELETE"])
+@profile_guard
 def api_delete_user(uid):
     store.delete_user(uid)
     return jsonify({"ok": True})
 
 
 @app.route("/api/users/<int:uid>/test", methods=["POST"])
+@profile_guard
 def api_test_connection(uid):
     u = store.get_user(uid)
     if not u:
@@ -87,6 +198,7 @@ def api_test_connection(uid):
 
 
 @app.route("/api/users/<int:uid>/analyze", methods=["POST"])
+@profile_guard
 def api_analyze(uid):
     u = store.get_user(uid)
     if not u:
@@ -168,6 +280,7 @@ _LATEST: dict = {}
 
 
 @app.route("/api/users/<int:uid>/feedback", methods=["POST"])
+@profile_guard
 def api_feedback(uid):
     u = store.get_user(uid)
     if not u:
@@ -185,6 +298,7 @@ def api_feedback(uid):
 
 
 @app.route("/api/users/<int:uid>/import_settings", methods=["POST"])
+@profile_guard
 def api_import_settings(uid):
     u = store.get_user(uid)
     if not u:
@@ -226,6 +340,7 @@ def api_feedback_options():
 
 
 @app.route("/dashboard/<int:uid>")
+@profile_guard
 def dashboard(uid):
     u = store.get_user(uid)
     if not u:

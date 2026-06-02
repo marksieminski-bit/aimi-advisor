@@ -1,0 +1,43 @@
+# ============================================================================
+# DEPLOY compose for Dockge (pulls the prebuilt image from GHCR).
+# Paste this into your Dockge stack, replacing the whole compose.
+#
+# IMPORTANT for login to work properly:
+#   AIMI_SECRET  — set this to a long random string. It signs login sessions.
+#                  If you don't set it, everyone gets logged out on every restart.
+#                  Generate one (any long random text), e.g.:
+#                     openssl rand -hex 32
+#                  Paste the result after AIMI_SECRET=
+# ============================================================================
+services:
+  aimi-advisor:
+    image: ghcr.io/marksieminski-bit/aimi-advisor:latest
+    container_name: aimi-advisor
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "8098:8080"
+    environment:
+      - AIMI_SECRET=CHANGE_ME_to_a_long_random_string
+      - AIMI_HTTPS=1            # served over HTTPS via the tunnel -> secure cookies
+    volumes:
+      - aimi-data:/data
+    networks:
+      - aimi-tunnel-net
+
+  cloudflare-tunnel:
+    container_name: cloudflare-tunnel
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=PUT_FRESH_ROTATED_TOKEN_HERE
+    command: tunnel run
+    networks:
+      - aimi-tunnel-net
+
+volumes:
+  aimi-data:
+
+networks:
+  aimi-tunnel-net:
+    driver: bridge

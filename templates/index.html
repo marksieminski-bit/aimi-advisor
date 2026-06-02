@@ -17,6 +17,13 @@
         <div class="subtitle">Self-hosted glucose analysis · Nightscout connected</div>
       </div>
     </div>
+    {% if account %}
+    <div style="margin-left:auto;display:flex;align-items:center;gap:14px">
+      <span style="color:#7c8aa3;font-size:13px">Signed in as <b style="color:#e2e8f0">{{ account.username }}</b>{% if account.is_admin %} · admin{% endif %}</span>
+      {% if account.is_admin %}<a href="{{ url_for('register_page') }}" style="color:#38bdf8;font-size:13px;text-decoration:none">+ Add account</a>{% endif %}
+      <a href="{{ url_for('logout') }}" style="color:#7c8aa3;font-size:13px;text-decoration:none;border:1px solid #243049;padding:6px 12px;border-radius:8px">Sign out</a>
+    </div>
+    {% endif %}
   </header>
 
   <div class="section-title">Profiles</div>

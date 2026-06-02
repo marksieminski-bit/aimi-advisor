@@ -85,14 +85,15 @@ def _dec(blob):
     return fernet().decrypt(blob).decode()
 
 
-def create_user(name, ns_url, ns_token=None, ns_secret=None, tz_offset_min=0, settings=None):
+def create_user(name, ns_url, ns_token=None, ns_secret=None, tz_offset_min=0,
+                settings=None, owner_account_id=None):
     con = sqlite3.connect(DB_PATH)
     now = datetime.utcnow().isoformat()
     cur = con.execute(
         """INSERT INTO users (name, ns_url, ns_token_enc, ns_secret_enc, tz_offset_min,
-           settings_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+           settings_json, created_at, updated_at, owner_account_id) VALUES (?,?,?,?,?,?,?,?,?)""",
         (name, ns_url, _enc(ns_token), _enc(ns_secret), tz_offset_min,
-         json.dumps(settings or {}), now, now),
+         json.dumps(settings or {}), now, now, owner_account_id),
     )
     con.commit()
     uid = cur.lastrowid
@@ -139,10 +140,16 @@ def _row_to_user(row):
     }
 
 
-def list_users():
+def list_users(owner_account_id=None, is_admin=False):
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT id, name, ns_url, updated_at FROM users ORDER BY name").fetchall()
+    if is_admin or owner_account_id is None:
+        rows = con.execute(
+            "SELECT id, name, ns_url, updated_at FROM users ORDER BY name").fetchall()
+    else:
+        rows = con.execute(
+            "SELECT id, name, ns_url, updated_at FROM users WHERE owner_account_id=? ORDER BY name",
+            (owner_account_id,)).fetchall()
     con.close()
     return [{"id": r["id"], "name": r["name"], "ns_url": r["ns_url"],
              "updated_at": r["updated_at"]} for r in rows]
