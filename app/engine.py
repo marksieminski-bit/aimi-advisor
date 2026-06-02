@@ -5,7 +5,7 @@ Encodes the safety/threshold logic observed in the OpenAPS AIMI source:
   - HypoThresholdMath: LGS is a hard floor; must be set sensibly
   - PkpdPresetProfiles: Ultra-fast preset bounds (DIA 5-8h, peak 35-95, init DIA 6.0)
   - PkpdSmbTailDamping: cautious=0.92, neutral=0.85, permissive=0.70
-  - PkpdCorrectionPrudence: ISF fusion neutral=(0.75,1.25), prudent=(0.85,1.10)
+  - IsfFusion.kt: ISF fusion neutral=(0.75,1.25), prudent=(0.85,1.10)
   - InsulinStackingStance: Max IOB ceiling; priority factor 1.20 + 2.0U extra
   - PkpdLearningPace: slow=0.2h/2min, normal=0.5h/5min, fast=1.0h/10min
 
@@ -138,7 +138,7 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
                 "DetermineBasalAIMI2.kt line ~2794 (ci = 450/tdd7Days)",
             ))
 
-    # ---- 5. ISF FUSION (PkpdCorrectionPrudence neutral = 0.75/1.25) ----
+    # ---- 5. ISF FUSION (IsfFusion.kt neutral = 0.75/1.25) ----
     isf_min = s.get("isf_fusion_min")
     isf_max = s.get("isf_fusion_max")
     if isf_max is not None:
@@ -151,7 +151,7 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
                 f"during rises. With {high:.0f}% time high, the ceiling is likely being hit. "
                 "IsfFusion.fused() uses maxSafeIsf = tdd × maxFactor × 1.5.",
                 f"min {isf_min} / max {isf_max}", "0.75 / 1.25",
-                "PkpdCorrectionPrudence.kt (neutral = 0.75/1.25)",
+                "CorrectionAggressionGate.kt",
             ))
 
     # ---- 6. (Sensitivity/Resistance target toggles removed from advisor) ----
@@ -271,7 +271,7 @@ def pkpd_recommendations(analysis, profile, s, tdd):
     }
     p = presets.get(insulin, presets["ultrafast"])
 
-    # ISF fusion target. Neutral = (0.75, 1.25) from PkpdCorrectionPrudence.
+    # ISF fusion target. Neutral = (0.75, 1.25) from IsfFusion.kt.
     # Lean prudent if lows are frequent; lean wider if highs dominate & lows are low.
     if low > 5 or low_per_day > 2.5:
         isf_min, isf_max, prudence = 0.80, 1.15, "prudent (frequent lows → tighter correction range)"
@@ -319,7 +319,7 @@ def pkpd_recommendations(analysis, profile, s, tdd):
          None, "TapPeakGovernor.kt")
     item("ISF fusion min factor", f"{isf_min}",
          f"Lower bound on fused ISF — {prudence}.",
-         _fmt(s.get("isf_fusion_min")), "PkpdCorrectionPrudence.kt")
+         _fmt(s.get("isf_fusion_min")), "CorrectionAggressionGate.kt")
     item("ISF fusion max factor", f"{isf_max}",
          f"Upper bound on fused ISF — {prudence}.",
          _fmt(s.get("isf_fusion_max")), "IsfFusion.fused()")
