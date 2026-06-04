@@ -30,10 +30,31 @@ ULTRAFAST = {
 }
 
 
+# Where to find each recommendation's setting in AIMI (by recommendation id).
+# VERIFIED against OpenAPSAIMIPlugin.kt getPreferenceScreenContent(): these settings
+# live directly on the main "OpenAPS AIMI" preferences screen (a flat scrolling list),
+# NOT in separate Safety/SMB sub-menus.
+REC_LOCATIONS = {
+    "lgs": "Preferences → OpenAPS AIMI → scroll down the main list to 'LGS threshold' "
+           "(it's below the Dynamic ISF items, near Sensitivity/Resistance toggles).",
+    "max_iob": "Preferences → OpenAPS AIMI → near the top of the main list, 'Max IOB' "
+               "(just below Max basal).",
+    "tdd7": "Preferences → OpenAPS AIMI → scroll well down the main list to the group with "
+            "Max SMB / weight / CHO → 'TDD7' (just above the PK/PD insulin model sub-screen).",
+    "init_dia": "Preferences → OpenAPS AIMI → PK/PD insulin model sub-screen → Starting DIA.",
+    "isf_fusion": "Preferences → OpenAPS AIMI → PK/PD insulin model sub-screen → ISF fusion factors.",
+    "tail_damping": "Preferences → OpenAPS AIMI → PK/PD insulin model sub-screen → SMB tail damping / late insulin action.",
+    "learning_pace": "Preferences → OpenAPS AIMI → PK/PD insulin model sub-screen → Learning speed.",
+    "overnight": "Review your overnight basal rates and targets in AAPS Profile with your care team (not a single AIMI toggle).",
+    "evening": "Review evening basal/targets and meal timing in AAPS Profile with your care team (not a single AIMI toggle).",
+}
+
+
 def _rec(rid, sev, title, detail, current=None, recommended=None, code_ref=None):
     return {
         "id": rid, "severity": sev, "title": title, "detail": detail,
         "current": current, "recommended": recommended, "code_ref": code_ref,
+        "location": REC_LOCATIONS.get(rid),
     }
 
 
@@ -398,13 +419,14 @@ SLIDER_LOCATIONS = {
     "ISF (profile)": "AAPS main screen → Profile (or Local Profile) → ISF — this is your profile insulin sensitivity, not an AIMI-only setting.",
     "Carb ratio": "AAPS main screen → Profile (or Local Profile) → IC / Carb ratio.",
     "BG target": "AAPS main screen → Profile (or Local Profile) → Target BG.",
-    "LGS threshold": "Preferences → OpenAPS AIMI → Safety → Low Glucose Suspend threshold (stored in mg/dL; max 100 mg/dL ≈ 5.6 mmol/L).",
-    "Max IOB": "Preferences → OpenAPS AIMI → SMB / Safety → Max IOB.",
-    "Max basal": "Preferences → OpenAPS AIMI → Max basal (also bounded by your pump's max basal).",
-    "DynamicISF factor": "Preferences → OpenAPS AIMI → Dynamic ISF → adjustment factor.",
-    "TDD7": "Preferences → OpenAPS AIMI → TDD / learning → 7-day total daily dose.",
-    "SMB interval": "Preferences → OpenAPS AIMI → SMB → SMB interval (minutes).",
-    "Insulin preset": "Preferences → OpenAPS AIMI → PK/PD insulin model → Insulin preset.",
+    # VERIFIED against OpenAPSAIMIPlugin.kt — these are on the main OpenAPS AIMI screen.
+    "LGS threshold": "Preferences → OpenAPS AIMI → main list, below the Dynamic ISF items → 'LGS threshold' (stored mg/dL; max 100 mg/dL ≈ 5.6 mmol/L).",
+    "Max IOB": "Preferences → OpenAPS AIMI → near top of main list → 'Max IOB' (just below Max basal).",
+    "Max basal": "Preferences → OpenAPS AIMI → top of main list → 'Max basal' (also bounded by your pump's max basal).",
+    "DynamicISF factor": "Preferences → OpenAPS AIMI → main list → 'DynISF adjustment factor'.",
+    "TDD7": "Preferences → OpenAPS AIMI → scroll down to the Max SMB / weight / CHO group → 'TDD7'.",
+    "SMB interval": "Preferences → OpenAPS AIMI → main list → 'Max SMB frequency' (SMB interval, minutes).",
+    "Insulin preset": "Preferences → OpenAPS AIMI → PK/PD insulin model sub-screen → Insulin preset.",
 }
 
 

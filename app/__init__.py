@@ -227,11 +227,15 @@ def api_analyze(uid):
     u = store.get_user(uid)
     if not u:
         abort(404)
-    days = int(request.args.get("days", MIN_DAYS))
-    if days < MIN_DAYS:
-        days = MIN_DAYS
-    if days > MAX_DAYS:
-        days = MAX_DAYS
+    # User-selectable analysis window. Short windows are allowed but flagged as
+    # statistically weak — see data_confidence below.
+    ALLOWED_DAYS = [1, 2, 3, 5, 7, 10, 14, 15, 21, 30, 60, 90]
+    try:
+        days = int(request.args.get("days", 15))
+    except (TypeError, ValueError):
+        days = 15
+    # clamp to the allowed range
+    days = max(1, min(days, 90))
 
     client = NightscoutClient(u["ns_url"], u["ns_token"], u["ns_secret"])
     try:
@@ -242,12 +246,48 @@ def api_analyze(uid):
     analysis = analyze_entries(entries, tz_offset_min=u["tz_offset_min"])
     if analysis.get("error"):
         return jsonify({"error": analysis["error"], "detail": analysis}), 422
-    if analysis["days"] < MIN_DAYS - 1:
+
+    actual_days = analysis.get("days", 0)
+    # Only hard-fail if there's essentially nothing to analyze.
+    if actual_days < 1:
         return jsonify({
             "error": "insufficient_days",
-            "message": f"Only {analysis['days']} days of data found; need at least {MIN_DAYS}.",
+            "message": "Not enough glucose data found to analyze.",
             "analysis": analysis,
         }), 422
+
+    # Data-confidence rating — be honest about how much weight to put on the result.
+    # Recommendations off 1-2 days are reacting to noise, not patterns.
+    if actual_days < 3:
+        confidence = {
+            "level": "very_low",
+            "label": "Very low confidence",
+            "note": (f"Only {actual_days} day(s) of data. This is a snapshot, not a pattern — "
+                     "a single bad day, meal, or activity can dominate it. Do NOT change "
+                     "settings based on this; use it to spot something to watch, then look "
+                     "at a longer window."),
+        }
+    elif actual_days < 7:
+        confidence = {
+            "level": "low",
+            "label": "Low confidence",
+            "note": (f"{actual_days} days of data. Enough to spot a trend forming, but short "
+                     "windows are heavily affected by day-to-day variation. Treat patterns "
+                     "as tentative and confirm over a longer window before acting."),
+        }
+    elif actual_days < 14:
+        confidence = {
+            "level": "moderate",
+            "label": "Moderate confidence",
+            "note": (f"{actual_days} days of data. Reasonable for spotting consistent patterns. "
+                     "14+ days is preferred for settings decisions."),
+        }
+    else:
+        confidence = {
+            "level": "good",
+            "label": "Good confidence",
+            "note": f"{actual_days} days of data — a solid window for identifying stable patterns.",
+        }
 
     treatments = client.get_treatments(days=days)
     ns_profile = client.get_profile()
@@ -290,6 +330,9 @@ def api_analyze(uid):
         "tdd_estimate": tdd_est,
         "bolus": bolus,
         "result": result,
+        "days_requested": days,
+        "days_actual": actual_days,
+        "data_confidence": confidence,
         "stability": {
             "settling": stability["settling"],
             "change_log": stability["change_log"],
