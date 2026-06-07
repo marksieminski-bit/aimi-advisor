@@ -77,6 +77,29 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
 
     s = settings or {}
 
+    # Unit-aware display. All glucose values in the engine are in mmol internally;
+    # convert for display so mg/dL users never see mmol in recommendation text.
+    _is_mgdl = (profile.get("units") or "mmol").lower().startswith("mg")
+    _MGDL = 18.018
+
+    def gv(mmol):
+        """Glucose value in the user's units (number only), rounded sensibly."""
+        if mmol is None:
+            return None
+        return round(mmol * _MGDL) if _is_mgdl else round(mmol, 1)
+
+    def ulabel():
+        return "mg/dL" if _is_mgdl else "mmol/L"
+
+    def gl(mmol):
+        """Glucose value WITH unit label, e.g. '5.6 mmol/L' or '101 mg/dL'."""
+        v = gv(mmol)
+        return f"{v} {ulabel()}" if v is not None else "?"
+
+    def glrange(lo_mmol, hi_mmol):
+        """A range like '4.0–4.2 mmol/L' / '72–76 mg/dL'."""
+        return f"{gv(lo_mmol)}–{gv(hi_mmol)} {ulabel()}"
+
     # ---- 1. LGS THRESHOLD (HypoThresholdMath.kt: hard floor override) ----
     lgs = s.get("lgs_threshold")
     if lgs is not None:
@@ -85,17 +108,18 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
             recs.append(_rec(
                 "lgs", SEV_CRITICAL,
                 "Lower LGS Threshold — Immediate Safety Fix",
-                f"At {lgs} mmol/L, insulin suspends while BG is still normal. "
+                f"At {gl(lgs)}, insulin suspends while BG is still normal. "
                 "HypoThresholdMath.computeHypoThreshold uses this as a hard floor that "
                 "overrides the formula-based threshold, driving suspend→rise→overcorrect→low cycles.",
-                f"{lgs} mmol/L", "4.0–4.2 mmol/L",
+                gl(lgs), glrange(4.0, 4.2),
                 "HypoThresholdMath.kt → computeHypoThreshold()",
             ))
         elif lgs > 4.4:
             recs.append(_rec(
                 "lgs", SEV_WARN, "Consider lowering LGS slightly",
-                f"LGS at {lgs} is on the higher side; 4.0–4.2 gives protection without premature suspends.",
-                f"{lgs} mmol/L", "4.0–4.2 mmol/L",
+                f"LGS at {gl(lgs)} is on the higher side; {glrange(4.0, 4.2)} gives protection "
+                "without premature suspends.",
+                gl(lgs), glrange(4.0, 4.2),
                 "HypoThresholdMath.kt",
             ))
 
@@ -212,10 +236,10 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
             recs.append(_rec(
                 "overnight", SEV_WARN,
                 "Overnight lows detected (2–6am)",
-                f"Overnight average is {night_avg:.1f} mmol/L with lows down to {night_min} mmol/L. "
+                f"Overnight average is {gl(night_avg)} with lows down to {gl(night_min)}. "
                 "Combined with the LGS fix, review whether overnight basal carries too much, "
                 "or evening IOB stacks into the night.",
-                f"avg {night_avg:.1f} / min {night_min}", "target avg ~6.0",
+                f"avg {gv(night_avg)} / min {gv(night_min)}", f"target avg ~{gv(6.0)}",
                 "data-driven (hourly pattern)",
             ))
 
@@ -227,9 +251,9 @@ def generate(analysis: dict, profile: dict, settings: dict, actual_tdd_est=None)
             recs.append(_rec(
                 "evening", SEV_INFO,
                 "Evening highs detected (5–8pm)",
-                f"Evening average is {eve_avg:.1f} mmol/L. This may reflect dinner coverage "
+                f"Evening average is {gl(eve_avg)}. This may reflect dinner coverage "
                 "or an ISF fusion ceiling limiting corrections. Review CR/meal handling.",
-                f"avg {eve_avg:.1f}", "target avg ~7.0",
+                f"avg {gv(eve_avg)}", f"target avg ~{gv(7.0)}",
                 "data-driven (hourly pattern)",
             ))
 

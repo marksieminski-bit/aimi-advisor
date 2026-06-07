@@ -66,7 +66,7 @@
       <div class="import-note">🔒 The password is used only to decrypt this file on your own server and is never stored.</div>
     </div>
     <div class="grid-3">
-      <div class="form-row"><label>LGS threshold (mmol/L)</label><input id="s_lgs" type="number" step="0.1"></div>
+      <div class="form-row"><label>LGS threshold (<span id="lgsUnitLabel">mmol/L</span>)</label><input id="s_lgs" type="number" step="0.1"></div>
       <div class="form-row"><label>Max IOB (U)</label><input id="s_maxiob" type="number" step="0.5"></div>
       <div class="form-row"><label>TDD7 (U)</label><input id="s_tdd7" type="number" step="1"></div>
       <div class="form-row"><label>PK/PD Initial DIA (h)</label><input id="s_dia" type="number" step="0.1"></div>
@@ -133,7 +133,7 @@
         <div id="tirLegend" style="margin-top:16px"></div>
       </div>
       <div class="card">
-        <div class="card-label">Average Glucose by Hour · mmol/L</div>
+        <div class="card-label">Average Glucose by Hour · <span id="chartUnitLabel">mmol/L</span></div>
         <div class="chart-container" style="margin-top:12px"><canvas id="hourlyChart" height="180"></canvas></div>
       </div>
     </div>
@@ -320,11 +320,34 @@ function fillSettingsForm(s){
   if(s.resistance_lowers_target!=null) document.getElementById('s_rlt').checked = !!s.resistance_lowers_target;
 }
 let CURRENT_UNITS = 'mmol';
+const MGDL_PER_MMOL = 18.018;
 function setUnits(u){
   CURRENT_UNITS = (u==='mgdl')?'mgdl':'mmol';
   const b = document.getElementById('unitsBadge');
-  if(b){ b.textContent = CURRENT_UNITS==='mgdl'?'mg/dL':'mmol/L'; }
+  if(b){ b.textContent = unitLabel(); }
+  const cl = document.getElementById('chartUnitLabel');
+  if(cl){ cl.textContent = unitLabel(); }
+  const lgs = document.getElementById('lgsUnitLabel');
+  if(lgs){ lgs.textContent = unitLabel(); }
 }
+// The unit label for the current user ("mmol/L" or "mg/dL").
+function unitLabel(){ return CURRENT_UNITS==='mgdl' ? 'mg/dL' : 'mmol/L'; }
+// Convert an internal mmol glucose value to a DISPLAY value in the user's units.
+// All glucose values are stored internally in mmol; this is the single place that
+// converts for display so mg/dL users never see mmol numbers.
+function gluc(mmolVal){
+  if(mmolVal==null || mmolVal==='' || isNaN(mmolVal)) return '?';
+  if(CURRENT_UNITS==='mgdl') return Math.round(mmolVal * MGDL_PER_MMOL);
+  return (Math.round(mmolVal*10)/10);
+}
+// glucose value WITH unit label, e.g. "5.5 mmol/L" or "99 mg/dL"
+function glucL(mmolVal){
+  const v = gluc(mmolVal);
+  return v==='?' ? '?' : `${v} ${unitLabel()}`;
+}
+// A glucose threshold given in mmol (e.g. 3.9, 10) shown in user units for labels.
+function glucThresh(mmolVal){ return gluc(mmolVal); }
+
 
 async function runAnalysis() {
   document.getElementById('loading').style.display='flex';
@@ -382,17 +405,17 @@ function render(d) {
   const t = a.tir;
   document.getElementById('metrics').innerHTML = `
     ${metric('Time in Range', a.tir.in_range+'%', a.tir.in_range>=70?'ok':'danger', 'Target >70%')}
-    ${metric('Below 3.9', (t.low+t.very_low).toFixed(1)+'%', (t.low+t.very_low)<=4?'ok':'danger', 'Target <4%')}
-    ${metric('Mean Glucose', a.mean_mmol+' mmol/L', 'info', 'GMI ≈ '+a.gmi+'%')}
+    ${metric('Below '+glucThresh(3.9), (t.low+t.very_low).toFixed(1)+'%', (t.low+t.very_low)<=4?'ok':'danger', 'Target <4%')}
+    ${metric('Mean Glucose', glucL(a.mean_mmol), 'info', 'GMI ≈ '+a.gmi+'%')}
     ${metric('Variability', a.cv+'%', a.cv<=36?'ok':'warn', 'CV target <36%')}`;
 
-  // TIR legend
+  // TIR legend (thresholds defined in mmol, displayed in user units)
   const zones = [
-    ['Very Low <2.8', t.very_low, '#ef4444', '<1%'],
-    ['Low 2.8–3.9', t.low, '#f97316', '<4%'],
-    ['In Range 3.9–10', t.in_range, '#22c55e', '>70%'],
-    ['High 10–13.9', t.high, '#eab308', '<25%'],
-    ['Very High >13.9', t.very_high, '#dc2626', '<5%'],
+    [`Very Low <${glucThresh(2.8)}`, t.very_low, '#ef4444', '<1%'],
+    [`Low ${glucThresh(2.8)}–${glucThresh(3.9)}`, t.low, '#f97316', '<4%'],
+    [`In Range ${glucThresh(3.9)}–${glucThresh(10)}`, t.in_range, '#22c55e', '>70%'],
+    [`High ${glucThresh(10)}–${glucThresh(13.9)}`, t.high, '#eab308', '<25%'],
+    [`Very High >${glucThresh(13.9)}`, t.very_high, '#dc2626', '<5%'],
   ];
   document.getElementById('tirLegend').innerHTML = zones.map(([n,p,c,tg])=>`
     <div class="tir-row">
@@ -536,12 +559,21 @@ function sliderRow(it,gi,ii){
     </div>`;
   }
   // Range: AIMI stepper (− [value] +) with purple slider fill, recommended value shown big
-  const min=it.min, max=it.max, span=(max-min)||1;
-  const recVal = it.recommended_num;
-  const curVal = it.current_num;
+  // Glucose-unit sliders (mmol/L) are stored in mmol; convert to the user's units.
+  let it_unit = it.unit, it_min = it.min, it_max = it.max, it_step = it.step;
+  let curVal = it.current_num, recVal = it.recommended_num;
+  if(it.unit === 'mmol/L'){
+    it_unit = unitLabel();
+    if(CURRENT_UNITS === 'mgdl'){
+      const cvt = x => x==null?null:Math.round(x*MGDL_PER_MMOL);
+      it_min = cvt(it.min); it_max = cvt(it.max); it_step = 1;
+      curVal = cvt(curVal); recVal = cvt(recVal);
+    }
+  }
+  const min=it_min, max=it_max, span=(max-min)||1;
   const recPct = recVal!=null ? Math.max(0,Math.min(100,(recVal-min)/span*100)) : 0;
   const curPct = curVal!=null ? Math.max(0,Math.min(100,(curVal-min)/span*100)) : null;
-  const unit = it.unit?(' '+it.unit):'';
+  const unit = it_unit?(' '+it_unit):'';
   const recDisp = recVal!=null?recVal:(it.recommended||'—');
   return `<div class="aimi-card ${changed?'changed':''}">
     <div class="aimi-head">
@@ -555,7 +587,7 @@ function sliderRow(it,gi,ii){
         ${curPct!=null?`<div class="aimi-cur-tick" style="left:${curPct}%" title="Your current: ${curVal}${unit}"></div>`:''}
       </div>
       <div class="aimi-plus">+</div>
-      <div class="aimi-value">${esc(''+recDisp)}<span class="aimi-unit">${esc(it.unit||'')}</span></div>
+      <div class="aimi-value">${esc(''+recDisp)}<span class="aimi-unit">${esc(it_unit||'')}</span></div>
     </div>
     <div class="aimi-sub">
       ${curVal!=null?`Your current: <b class="${changed?'cur-diff':''}">${curVal}${unit}</b> → ` : ''}
@@ -568,10 +600,19 @@ function showSliderInfo(key){
   const it = (window._sliderItems||{})[key];
   if(!it) return;
   let h = `<h3>${esc(it.name)}</h3>`;
-  const unit = it.unit?(' '+it.unit):'';
+  // Convert glucose-unit values for display
+  let cur = it.current_num, rec = it.recommended_num, ulab = it.unit;
+  if((it.unit === 'mmol/L' || it.unit === 'mmol/U')){
+    ulab = (it.unit === 'mmol/U') ? (CURRENT_UNITS==='mgdl'?'mg/dL/U':'mmol/U') : unitLabel();
+    if(CURRENT_UNITS === 'mgdl'){
+      const cvt = x => x==null?null:Math.round(x*MGDL_PER_MMOL);
+      cur = cvt(cur); rec = cvt(rec);
+    }
+  }
+  const unit = ulab?(' '+ulab):'';
   h += `<div class="info-target">`;
-  if(it.current_num!=null) h += `Current: <strong>${it.current_num}${unit}</strong> &nbsp;·&nbsp; `;
-  h += `Recommended: <strong>${esc(it.recommended_num!=null?(it.recommended_num+unit):(it.recommended||'—'))}</strong></div>`;
+  if(cur!=null) h += `Current: <strong>${cur}${unit}</strong> &nbsp;·&nbsp; `;
+  h += `Recommended: <strong>${esc(rec!=null?(rec+unit):(it.recommended||'—'))}</strong></div>`;
   if(it.info_long) h += `<p>${esc(it.info_long)}</p>`;
   else if(it.reason) h += `<p>${esc(it.reason)}</p>`;
   if(it.location) h += `<div class="info-location">📍 <b>Where to find it:</b> ${esc(it.location)}</div>`;
@@ -726,7 +767,7 @@ function drawHourly(hourly){
     const y=fy(v);
     ctx.strokeStyle='rgba(30,36,51,0.6)'; ctx.lineWidth=0.5; ctx.setLineDash([2,4]);
     ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(pad.l+cw,y); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillText(v, 8, y);
+    ctx.fillText(gluc(v), 8, y);
   }
 
   // target threshold lines
@@ -828,7 +869,7 @@ function renderBolus(b){
   }
   if(b.uncorrected_meal_examples && b.uncorrected_meal_examples.length){
     html += `<div style="margin-top:14px"><div class="muted" style="font-size:13px;margin-bottom:8px">Examples of meals that stayed high (peak → 4h later):</div>`;
-    html += b.uncorrected_meal_examples.map(m=>`<div class="meal-ex"><span>${m.carbs||'?'}g carbs</span><span class="muted">start ${m.start_mmol??'?'}</span><span style="color:var(--warn)">peak ${m.peak_mmol}</span><span style="color:var(--danger)">4h: ${m.end_mmol}</span></div>`).join('');
+    html += b.uncorrected_meal_examples.map(m=>`<div class="meal-ex"><span>${m.carbs||'?'}g carbs</span><span class="muted">start ${gluc(m.start_mmol)}</span><span style="color:var(--warn)">peak ${gluc(m.peak_mmol)}</span><span style="color:var(--danger)">4h: ${gluc(m.end_mmol)}</span></div>`).join('');
     html += `</div>`;
   }
   el.innerHTML = html;
